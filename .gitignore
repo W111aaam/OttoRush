@@ -1,0 +1,28 @@
+.DS_Store
+**/.DS_Store
+
+# Node
+
+node_modules/
+**/node_modules/
+
+# Build outputs
+
+dist/
+**/dist/
+
+build/
+**/build/
+
+# Cloudflare / Wrangler local files
+
+.wrangler/
+**/.wrangler/
+
+# Logs
+
+*.log
+
+# Character skins are sourced from /model and copied into the Site at build time.
+
+game/public/models/character*.glb
