@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import characterModels from 'virtual:character-models';
 
@@ -30,9 +31,9 @@ function SkinPreview({ url }: { url: string }) {
     let model: THREE.Object3D | null = null;
     let frame = 0;
     let disposed = false;
-    new GLTFLoader().load(url, (gltf) => {
+    const showModel = (loadedModel: THREE.Object3D) => {
       if (disposed) return;
-      model = gltf.scene;
+      model = loadedModel;
       const initialBox = new THREE.Box3().setFromObject(model);
       const size = initialBox.getSize(new THREE.Vector3());
       model.scale.setScalar(2.5 / Math.max(size.y, 0.001));
@@ -40,7 +41,9 @@ function SkinPreview({ url }: { url: string }) {
       const center = box.getCenter(new THREE.Vector3());
       model.position.set(-center.x, -box.min.y - 1.2, -center.z);
       scene.add(model);
-    });
+    };
+    if (url.toLowerCase().endsWith('.fbx')) new FBXLoader().load(url, showModel);
+    else new GLTFLoader().load(url, (gltf) => showModel(gltf.scene));
 
     const resize = () => {
       const size = Math.max(mount.clientWidth, 1);

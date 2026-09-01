@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import characterModels from 'virtual:character-models';
 
 type Phase = 'menu' | 'playing' | 'paused' | 'dying' | 'gameover';
@@ -11,26 +13,32 @@ type AssetKind = EntityKind | 'character' | 'explosion';
 type Entity = { kind: EntityKind; lane: number; object: THREE.Object3D; active: boolean };
 type GameApi = { start: () => void; pause: () => void; resume: () => void; move: (direction: number) => void; jump: () => void; slide: () => void };
 type AudioApi = { setMusicVolume: (volume: number) => void; setSfxVolume: (volume: number) => void; ensureMusic: () => void };
+type CharacterMode = 'main' | 'walk' | 'hurdle' | 'dog';
+type LoadedModel = { scene: THREE.Object3D; animations: THREE.AnimationClip[] };
 
 const LANES = [-2.7, 0, 2.7];
 const PLAYER_Z = 3;
 const AIR_ENEMY_BASE_Y = 1.62;
 
 function fitModel(source: THREE.Object3D, height: number) {
-  const model = source.clone(true);
+  const model = cloneSkeleton(source);
   const box = new THREE.Box3().setFromObject(model);
   const size = box.getSize(new THREE.Vector3());
-  model.scale.setScalar(height / Math.max(size.y, 0.001));
-  const fitted = new THREE.Box3().setFromObject(model);
+  const fittedRoot = new THREE.Group();
+  fittedRoot.add(model);
+  fittedRoot.scale.setScalar(height / Math.max(size.y, 0.001));
+  const fitted = new THREE.Box3().setFromObject(fittedRoot);
   const center = fitted.getCenter(new THREE.Vector3());
-  model.position.set(-center.x, -fitted.min.y, -center.z);
-  model.traverse((child) => {
+  fittedRoot.position.set(-center.x, -fitted.min.y, -center.z);
+  const visualRoot = new THREE.Group();
+  visualRoot.add(fittedRoot);
+  visualRoot.traverse((child) => {
     if (child instanceof THREE.Mesh) {
       child.castShadow = true;
       child.receiveShadow = true;
     }
   });
-  return model;
+  return visualRoot;
 }
 
 function forEachMaterial(object: THREE.Object3D, callback: (material: THREE.Material, mesh: THREE.Mesh) => void) {
@@ -160,6 +168,14 @@ export default function RunnerGame() {
     const templates: Partial<Record<AssetKind, THREE.Object3D>> = {};
     const entities: Entity[] = [];
     const loader = new GLTFLoader();
+    const fbxLoader = new FBXLoader();
+    const loadModel = (url: string) => new Promise<LoadedModel>((resolve, reject) => {
+      if (url.toLowerCase().endsWith('.fbx')) {
+        fbxLoader.load(url, (object) => resolve({ scene: object, animations: object.animations }), undefined, reject);
+      } else {
+        loader.load(url, (gltf) => resolve({ scene: gltf.scene, animations: gltf.animations }), undefined, reject);
+      }
+    });
     const savedCharacter = localStorage.getItem('otto-runner-skin');
     const defaultCharacter = characterModels.find((model) => model.id === 1)?.url ?? characterModels[0]?.url ?? '/models/character1.glb';
     const selectedCharacter = savedCharacter && characterModels.some((model) => model.url === savedCharacter) ? savedCharacter : defaultCharacter;
@@ -175,23 +191,74 @@ export default function RunnerGame() {
     let characterRoot: THREE.Group | null = null;
     let characterVisual: THREE.Object3D | null = null;
     let characterBaseScaleY = 1;
+    let characterMode: CharacterMode = 'main';
+    const characterVariants: Partial<Record<CharacterMode, THREE.Object3D>> = {};
+    const characterMixers: THREE.AnimationMixer[] = [];
+    const isCharacter4 = selectedCharacter === '/models/character4.fbx';
+    const setCharacterMode = (mode: CharacterMode, restartAnimation = false) => {
+      if (!characterRoot) return;
+      const next = characterVariants[mode] ?? characterVariants.main;
+      if (!next) return;
+      Object.values(characterVariants).forEach((variant) => { variant.visible = variant === next; });
+      characterVisual = next;
+      characterBaseScaleY = next.scale.y;
+      if (characterMode !== mode || restartAnimation) {
+        const mixer = next.userData.animationMixer as THREE.AnimationMixer | undefined;
+        const action = next.userData.animationAction as THREE.AnimationAction | undefined;
+        if (mixer && action) { mixer.stopAllAction(); action.reset().play(); }
+      }
+      characterMode = mode;
+    };
     let loadCount = 0;
     assets.forEach(([kind, url, height]) => {
-      loader.load(url, (gltf) => {
+      const urls = kind === 'character' && isCharacter4
+        ? [
+            ['main', '/models/character4.fbx', 2.35],
+            ['walk', '/models/character4-walk.fbx', 2.35],
+            ['hurdle', '/models/character4-hurdle.fbx', 2.35],
+            ['dog', '/models/character4-dog.glb', 1.35],
+          ] as const
+        : [['main', url, height]] as const;
+      Promise.all(urls.map(async ([mode, modelUrl, modelHeight]) => {
+        const loaded = await loadModel(modelUrl);
+        return { mode, modelUrl, loaded, visual: fitModel(loaded.scene, modelHeight) };
+      })).then((loadedVariants) => {
         if (disposed) return;
-        templates[kind] = fitModel(gltf.scene, height);
+        templates[kind] = loadedVariants[0].visual;
         if (kind === 'character') {
           characterRoot = new THREE.Group();
-          characterVisual = templates.character.clone(true);
-          characterBaseScaleY = characterVisual.scale.y;
-          characterVisual.rotation.y = Math.PI;
-          characterRoot.add(characterVisual);
+          loadedVariants.forEach(({ mode, modelUrl, loaded, visual }) => {
+            visual.rotation.y = Math.PI;
+            visual.visible = mode === 'main';
+            characterVariants[mode] = visual;
+            characterRoot?.add(visual);
+            if (loaded.animations[0]) {
+              const mixer = new THREE.AnimationMixer(visual);
+              // FBX exports often contain root-motion position/scale tracks in
+              // authoring units. The runner owns translation and fitted size,
+              // so only retain the skeletal rotations from those clips.
+              const sourceClip = loaded.animations[0];
+              const clip = modelUrl.endsWith('.fbx')
+                ? new THREE.AnimationClip(
+                    sourceClip.name,
+                    sourceClip.duration,
+                    sourceClip.tracks.filter((track) => track.name.endsWith('.quaternion')),
+                  )
+                : sourceClip;
+              const action = mixer.clipAction(clip);
+              action.play();
+              visual.userData.animationMixer = mixer;
+              visual.userData.animationAction = action;
+              characterMixers.push(mixer);
+            }
+          });
+          setCharacterMode('main');
           characterRoot.position.set(0, 0, PLAYER_Z);
           scene.add(characterRoot);
         }
         loadCount += 1;
         setLoaded(loadCount);
-      }, undefined, () => {
+      }).catch(() => {
         loadCount += 1;
         setLoaded(loadCount);
       });
@@ -309,6 +376,7 @@ export default function RunnerGame() {
       characterRoot.rotation.set(0, 0, 0);
       camera.position.set(0, 5.4, 10.4);
       if (characterVisual) {
+        setCharacterMode(isCharacter4 ? 'walk' : 'main', true);
         characterVisual.visible = true;
         characterVisual.rotation.y = Math.PI;
         characterVisual.scale.y = characterBaseScaleY;
@@ -458,6 +526,7 @@ export default function RunnerGame() {
       frame = requestAnimationFrame(render);
       const dt = Math.min(clock.getDelta(), 0.034);
       elapsed += dt;
+      characterMixers.forEach((mixer) => mixer.update(dt));
       if (currentPhase === 'playing' && characterRoot && characterVisual) {
         const speed = Math.min(16.5 + gameDistance / 85, 28);
         gameDistance += speed * dt;
@@ -473,6 +542,10 @@ export default function RunnerGame() {
         if (playerY === 0) velocityY = 0;
         characterRoot.position.y = playerY + (playerY === 0 ? Math.abs(Math.sin(elapsed * 10)) * 0.06 : 0);
         sliding = Math.max(0, sliding - dt);
+        if (isCharacter4) {
+          const nextMode: CharacterMode = sliding > 0 ? 'dog' : playerY > 0.05 ? 'hurdle' : 'walk';
+          if (nextMode !== characterMode) setCharacterMode(nextMode, nextMode === 'hurdle');
+        }
         characterVisual.scale.y = THREE.MathUtils.damp(
           characterVisual.scale.y,
           sliding > 0 ? characterBaseScaleY * 0.62 : characterBaseScaleY,

@@ -16,7 +16,7 @@ const modelsDirectory = fileURLToPath(new URL('./public/models', import.meta.url
 
 function readCharacterModels() {
   return readdirSync(modelsDirectory)
-    .map((fileName) => ({ fileName, match: /^character(\d+)\.glb$/i.exec(fileName) }))
+    .map((fileName) => ({ fileName, match: /^character(\d+)\.(?:glb|fbx)$/i.exec(fileName) }))
     .filter((entry): entry is { fileName: string; match: RegExpExecArray } => Boolean(entry.match))
     .sort((left, right) => Number(left.match[1]) - Number(right.match[1]))
     .map(({ fileName, match }) => ({ id: Number(match[1]), name: `Character${Number(match[1])}`, url: `/models/${fileName}` }));
@@ -35,7 +35,7 @@ const characterModelsPlugin = {
   configureServer(server: { watcher: { add: (path: string) => void; on: (event: string, callback: (path: string) => void) => void }; moduleGraph: { getModuleById: (id: string) => unknown; invalidateModule: (module: never) => void }; ws: { send: (message: { type: string }) => void } }) {
     server.watcher.add(modelsDirectory);
     const refreshModels = (filePath: string) => {
-      if (!/^character\d+\.glb$/i.test(filePath.split('/').pop() ?? '')) return;
+      if (!/^character\d+\.(?:glb|fbx)$/i.test(filePath.split('/').pop() ?? '')) return;
       const module = server.moduleGraph.getModuleById(RESOLVED_CHARACTER_MODELS_ID);
       if (module) server.moduleGraph.invalidateModule(module as never);
       server.ws.send({ type: 'full-reload' });
