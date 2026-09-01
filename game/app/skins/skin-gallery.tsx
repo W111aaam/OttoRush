@@ -28,19 +28,21 @@ function SkinPreview({ url }: { url: string }) {
     light.position.set(3, 5, 4);
     scene.add(light);
 
-    let model: THREE.Object3D | null = null;
+    let model: THREE.Group | null = null;
     let frame = 0;
     let disposed = false;
     const showModel = (loadedModel: THREE.Object3D) => {
       if (disposed) return;
-      model = loadedModel;
-      const initialBox = new THREE.Box3().setFromObject(model);
+      const pivot = new THREE.Group();
+      pivot.add(loadedModel);
+      const initialBox = new THREE.Box3().setFromObject(loadedModel);
       const size = initialBox.getSize(new THREE.Vector3());
-      model.scale.setScalar(2.5 / Math.max(size.y, 0.001));
-      const box = new THREE.Box3().setFromObject(model);
+      loadedModel.scale.setScalar(2.5 / Math.max(size.y, 0.001));
+      const box = new THREE.Box3().setFromObject(loadedModel);
       const center = box.getCenter(new THREE.Vector3());
-      model.position.set(-center.x, -box.min.y - 1.2, -center.z);
-      scene.add(model);
+      loadedModel.position.set(-center.x, -box.min.y - 1.2, -center.z);
+      model = pivot;
+      scene.add(pivot);
     };
     if (url.toLowerCase().endsWith('.fbx')) new FBXLoader().load(url, showModel);
     else new GLTFLoader().load(url, (gltf) => showModel(gltf.scene));
