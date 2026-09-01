@@ -179,8 +179,9 @@ export default function RunnerGame() {
     const savedCharacter = localStorage.getItem('otto-runner-skin');
     const defaultCharacter = characterModels.find((model) => model.id === 1)?.url ?? characterModels[0]?.url ?? '/models/character1.glb';
     const selectedCharacter = savedCharacter && characterModels.some((model) => model.url === savedCharacter) ? savedCharacter : defaultCharacter;
+    const characterHeight = selectedCharacter === '/models/character3.glb' ? 2.35 * 0.6 : 2.35;
     const assets: Array<[AssetKind, string, number]> = [
-      ['character', selectedCharacter, 2.35],
+      ['character', selectedCharacter, characterHeight],
       ['coin', '/models/coin.glb', 0.72],
       ['magnet', '/models/daoju1.glb', 1.05],
       ['enemy', '/models/enemy1.glb', 2.15],
