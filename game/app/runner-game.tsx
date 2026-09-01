@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import characterModels from 'virtual:character-models';
 
-type Phase = 'menu' | 'playing' | 'dying' | 'gameover';
+type Phase = 'menu' | 'playing' | 'paused' | 'dying' | 'gameover';
 type EntityKind = 'coin' | 'magnet' | 'enemy' | 'enemyAir';
 type AssetKind = EntityKind | 'character' | 'explosion';
 type Entity = { kind: EntityKind; lane: number; object: THREE.Object3D; active: boolean };
-type GameApi = { start: () => void; move: (direction: number) => void; jump: () => void; slide: () => void };
+type GameApi = { start: () => void; pause: () => void; resume: () => void; move: (direction: number) => void; jump: () => void; slide: () => void };
 type AudioApi = { setMusicVolume: (volume: number) => void; setSfxVolume: (volume: number) => void; ensureMusic: () => void };
 
 const LANES = [-2.7, 0, 2.7];
@@ -73,7 +74,7 @@ export default function RunnerGame() {
     let sfxLevel = sfxVolume;
     const activeSfx = new Set<HTMLAudioElement>();
     const ensureMusic = () => { void bgMusic.play().catch(() => undefined); };
-    const playSfx = (name: 'default' | 'death' | 'hidden' | 'hurt1' | 'hurt2') => {
+    const playSfx = (name: 'default' | 'death' | 'hidden' | 'hurt1' | 'hurt2' | 'pause') => {
       const sound = new Audio(`/audio/${name}.mp3`);
       sound.volume = sfxLevel;
       activeSfx.add(sound);
@@ -159,8 +160,11 @@ export default function RunnerGame() {
     const templates: Partial<Record<AssetKind, THREE.Object3D>> = {};
     const entities: Entity[] = [];
     const loader = new GLTFLoader();
+    const savedCharacter = localStorage.getItem('otto-runner-skin');
+    const defaultCharacter = characterModels.find((model) => model.id === 1)?.url ?? characterModels[0]?.url ?? '/models/character1.glb';
+    const selectedCharacter = savedCharacter && characterModels.some((model) => model.url === savedCharacter) ? savedCharacter : defaultCharacter;
     const assets: Array<[AssetKind, string, number]> = [
-      ['character', '/models/character1.glb', 2.35],
+      ['character', selectedCharacter, 2.35],
       ['coin', '/models/coin.glb', 0.72],
       ['magnet', '/models/daoju1.glb', 1.05],
       ['enemy', '/models/enemy1.glb', 2.15],
@@ -420,7 +424,21 @@ export default function RunnerGame() {
         sliding = 0.72;
       }
     };
-    apiRef.current = { start, move, jump, slide };
+    const pause = () => {
+      if (currentPhase !== 'playing') return;
+      currentPhase = 'paused';
+      setPhase('paused');
+      bgMusic.pause();
+      playSfx('pause');
+    };
+    const resume = () => {
+      if (currentPhase !== 'paused') return;
+      currentPhase = 'playing';
+      setPhase('playing');
+      ensureMusic();
+      playSfx('default');
+    };
+    apiRef.current = { start, pause, resume, move, jump, slide };
 
     const keydown = (event: KeyboardEvent) => {
       if (['ArrowLeft', 'a', 'A'].includes(event.key)) move(-1);
@@ -428,6 +446,8 @@ export default function RunnerGame() {
       else if (['ArrowUp', 'w', 'W', ' '].includes(event.key)) jump();
       else if (['ArrowDown', 's', 'S'].includes(event.key)) slide();
       else if (event.key === 'Enter' && (currentPhase === 'menu' || currentPhase === 'gameover')) start();
+      else if (event.key === 'Escape' && currentPhase === 'playing') pause();
+      else if (event.key === 'Escape' && currentPhase === 'paused') resume();
       if (event.key.startsWith('Arrow') || event.key === ' ') event.preventDefault();
     };
     window.addEventListener('keydown', keydown);
@@ -581,6 +601,8 @@ export default function RunnerGame() {
   }, []);
 
   const startGame = useCallback(() => apiRef.current?.start(), []);
+  const pauseGame = useCallback(() => apiRef.current?.pause(), []);
+  const resumeGame = useCallback(() => apiRef.current?.resume(), []);
   const onTouchStart = (event: React.TouchEvent) => {
     const touch = event.changedTouches[0];
     touchRef.current = { x: touch.clientX, y: touch.clientY };
@@ -645,7 +667,18 @@ export default function RunnerGame() {
           <h1>{score.toLocaleString()} <small>分</small></h1>
           <div className="result-row"><span>金币 <b>{coins}</b></span><span>距离 <b>{distance}m</b></span><span>最高 <b>{best}</b></span></div>
           <button type="button" onClick={startGame}>再冲一次</button>
+          <button type="button" className="skin-library-button" onClick={() => { window.location.href = '/skins'; }}>皮肤库</button>
         </section>
+      )}
+
+      {phase === 'paused' && (
+        <dialog open className="pause-card" aria-labelledby="pause-title">
+          <h1 id="pause-title">Pause, pause, pause</h1>
+          <div className="pause-actions">
+            <button type="button" onClick={resumeGame}>看你爹操作这波</button>
+            <button type="button" className="restart-button" onClick={startGame}>这把重开</button>
+          </div>
+        </dialog>
       )}
 
       {phase === 'playing' && (
@@ -657,28 +690,40 @@ export default function RunnerGame() {
         </div>
       )}
 
-      <div className="audio-control" onMouseEnter={revealAudioControls} onMouseLeave={scheduleAudioControlsHide}>
-        <div className={`audio-panel ${audioControlsOpen ? 'is-open' : ''}`} aria-hidden={!audioControlsOpen}>
-          <label>
-            <span><i>♫</i> 音乐</span>
-            <b>{Math.round(musicVolume * 100)}</b>
-            <input type="range" min="0" max="1" step="0.01" value={musicVolume} onChange={(event) => changeMusicVolume(Number(event.target.value))} tabIndex={audioControlsOpen ? 0 : -1} />
-          </label>
-          <label>
-            <span><i>♪</i> 音效</span>
-            <b>{Math.round(sfxVolume * 100)}</b>
-            <input type="range" min="0" max="1" step="0.01" value={sfxVolume} onChange={(event) => changeSfxVolume(Number(event.target.value))} tabIndex={audioControlsOpen ? 0 : -1} />
-          </label>
+      <div className="corner-controls">
+        {(phase === 'playing' || phase === 'paused') && (
+          <button
+            type="button"
+            className="round-control pause-trigger"
+            aria-label={phase === 'paused' ? '继续游戏' : '暂停游戏'}
+            onClick={phase === 'paused' ? resumeGame : pauseGame}
+          >
+            <span aria-hidden="true">{phase === 'paused' ? '▶' : 'Ⅱ'}</span>
+          </button>
+        )}
+        <div className="audio-control" onMouseEnter={revealAudioControls} onMouseLeave={scheduleAudioControlsHide}>
+          <div className={`audio-panel ${audioControlsOpen ? 'is-open' : ''}`} aria-hidden={!audioControlsOpen}>
+            <label>
+              <span><i>♫</i> 音乐</span>
+              <b>{Math.round(musicVolume * 100)}</b>
+              <input type="range" min="0" max="1" step="0.01" value={musicVolume} onChange={(event) => changeMusicVolume(Number(event.target.value))} tabIndex={audioControlsOpen ? 0 : -1} />
+            </label>
+            <label>
+              <span><i>♪</i> 音效</span>
+              <b>{Math.round(sfxVolume * 100)}</b>
+              <input type="range" min="0" max="1" step="0.01" value={sfxVolume} onChange={(event) => changeSfxVolume(Number(event.target.value))} tabIndex={audioControlsOpen ? 0 : -1} />
+            </label>
+          </div>
+          <button
+            type="button"
+            className="round-control audio-trigger"
+            aria-label="调整音乐和音效音量"
+            aria-expanded={audioControlsOpen}
+            onClick={() => audioControlsOpen ? setAudioControlsOpen(false) : revealAudioControls()}
+          >
+            <span aria-hidden="true">♫</span>
+          </button>
         </div>
-        <button
-          type="button"
-          className="audio-trigger"
-          aria-label="调整音乐和音效音量"
-          aria-expanded={audioControlsOpen}
-          onClick={() => audioControlsOpen ? setAudioControlsOpen(false) : revealAudioControls()}
-        >
-          <span aria-hidden="true">♫</span>
-        </button>
       </div>
     </main>
   );

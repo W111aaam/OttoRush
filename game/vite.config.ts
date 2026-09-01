@@ -1,6 +1,8 @@
 import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
+import { readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import hostingConfig from './.openai/hosting.json';
 
@@ -8,6 +10,40 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   '00000000-0000-4000-8000-000000000000';
 
 const { d1, r2 } = hostingConfig;
+const CHARACTER_MODELS_ID = 'virtual:character-models';
+const RESOLVED_CHARACTER_MODELS_ID = `\0${CHARACTER_MODELS_ID}`;
+const modelsDirectory = fileURLToPath(new URL('./public/models', import.meta.url));
+
+function readCharacterModels() {
+  return readdirSync(modelsDirectory)
+    .map((fileName) => ({ fileName, match: /^character(\d+)\.glb$/i.exec(fileName) }))
+    .filter((entry): entry is { fileName: string; match: RegExpExecArray } => Boolean(entry.match))
+    .sort((left, right) => Number(left.match[1]) - Number(right.match[1]))
+    .map(({ fileName, match }) => ({ id: Number(match[1]), name: `Character${Number(match[1])}`, url: `/models/${fileName}` }));
+}
+
+const characterModelsPlugin = {
+  name: 'otto-character-models',
+  resolveId(id: string) {
+    return id === CHARACTER_MODELS_ID ? RESOLVED_CHARACTER_MODELS_ID : undefined;
+  },
+  load(id: string) {
+    return id === RESOLVED_CHARACTER_MODELS_ID
+      ? `export default ${JSON.stringify(readCharacterModels())}`
+      : undefined;
+  },
+  configureServer(server: { watcher: { add: (path: string) => void; on: (event: string, callback: (path: string) => void) => void }; moduleGraph: { getModuleById: (id: string) => unknown; invalidateModule: (module: never) => void }; ws: { send: (message: { type: string }) => void } }) {
+    server.watcher.add(modelsDirectory);
+    const refreshModels = (filePath: string) => {
+      if (!/^character\d+\.glb$/i.test(filePath.split('/').pop() ?? '')) return;
+      const module = server.moduleGraph.getModuleById(RESOLVED_CHARACTER_MODELS_ID);
+      if (module) server.moduleGraph.invalidateModule(module as never);
+      server.ws.send({ type: 'full-reload' });
+    };
+    server.watcher.on('add', refreshModels);
+    server.watcher.on('unlink', refreshModels);
+  },
+};
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
@@ -50,6 +86,7 @@ export default defineConfig(async () => {
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
+      characterModelsPlugin,
       vinext(),
       sites(),
       cloudflare({
