@@ -24,5 +24,3 @@ build/
 *.log
 
 # Character skins are sourced from /model and copied into the Site at build time.
-
-game/public/models/character*.glb
