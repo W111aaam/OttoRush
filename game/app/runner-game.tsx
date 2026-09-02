@@ -20,17 +20,24 @@ const LANES = [-2.7, 0, 2.7];
 const PLAYER_Z = 3;
 const AIR_ENEMY_BASE_Y = 1.62;
 
-function fitModel(source: THREE.Object3D, height: number) {
+function fitModel(source: THREE.Object3D, height: number, rotationPivotBone?: string) {
   const model = cloneSkeleton(source);
   const box = new THREE.Box3().setFromObject(model);
   const size = box.getSize(new THREE.Vector3());
   const fittedRoot = new THREE.Group();
   fittedRoot.add(model);
   fittedRoot.scale.setScalar(height / Math.max(size.y, 0.001));
+  fittedRoot.updateMatrixWorld(true);
   const fitted = new THREE.Box3().setFromObject(fittedRoot);
   const center = fitted.getCenter(new THREE.Vector3());
-  fittedRoot.position.set(-center.x, -fitted.min.y, -center.z);
   const visualRoot = new THREE.Group();
+  const pivotBone = rotationPivotBone ? model.getObjectByName(rotationPivotBone) : undefined;
+  if (pivotBone) {
+    const pivot = pivotBone.getWorldPosition(new THREE.Vector3());
+    fittedRoot.position.set(-pivot.x, -fitted.min.y, -pivot.z);
+  } else {
+    fittedRoot.position.set(-center.x, -fitted.min.y, -center.z);
+  }
   visualRoot.add(fittedRoot);
   visualRoot.traverse((child) => {
     if (child instanceof THREE.Mesh) {
@@ -102,6 +109,30 @@ export default function RunnerGame() {
     const camera = new THREE.PerspectiveCamera(57, 1, 0.1, 190);
     camera.position.set(0, 5.4, 10.4);
     camera.lookAt(0, 1.1, -10);
+    const sunTexture = new THREE.TextureLoader().load('/images/sun.png');
+    sunTexture.colorSpace = THREE.SRGBColorSpace;
+    const sunMaterial = new THREE.SpriteMaterial({
+      map: sunTexture,
+      transparent: true,
+      depthTest: true,
+      depthWrite: false,
+      fog: false,
+    });
+    const sunSprite = new THREE.Sprite(sunMaterial);
+    sunSprite.renderOrder = -1;
+    camera.add(sunSprite);
+    scene.add(camera);
+    const placeSun = (time: number) => {
+      const distance = 178;
+      const bounce = Math.sin(time * 2.9);
+      const visibleHeight = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) * distance;
+      const visibleWidth = visibleHeight * camera.aspect;
+      sunSprite.position.set(visibleWidth / 6, visibleHeight * (0.365 + bounce * 0.009), -distance);
+      const width = visibleWidth * 0.156;
+      const pulse = 1 + Math.sin(time * 5.4) * 0.035;
+      sunSprite.scale.set(width * pulse, width / (1402 / 1122) * pulse, 1);
+      sunMaterial.opacity = 0.9 + Math.sin(time * 5.4) * 0.1;
+    };
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.shadowMap.enabled = true;
@@ -134,6 +165,13 @@ export default function RunnerGame() {
       scene.add(walk);
       return walk;
     });
+    const grassMaterial = new THREE.MeshStandardMaterial({ color: '#62a95c', roughness: 0.98 });
+    for (const x of [-10.3, 10.3]) {
+      const grass = new THREE.Mesh(new THREE.BoxGeometry(5, 0.14, 190), grassMaterial);
+      grass.position.set(x, 0.01, -77);
+      grass.receiveShadow = true;
+      scene.add(grass);
+    }
 
     const movers: THREE.Object3D[] = [];
     const dashMaterial = new THREE.MeshBasicMaterial({ color: '#f4d66e' });
@@ -154,15 +192,39 @@ export default function RunnerGame() {
       building.position.y = h / 2;
       building.castShadow = true;
       group.add(building);
-      for (let w = 0; w < 3; w += 1) {
+      const colorIndex = i % colors.length;
+      const windowCount = colorIndex === 0 ? 2 : colorIndex === 3 || colorIndex === 4 ? 4 : 3;
+      for (let w = 0; w < windowCount; w += 1) {
         const windowMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.7), new THREE.MeshBasicMaterial({ color: w % 2 ? '#ffe79b' : '#c9efff' }));
         windowMesh.position.set(side < 0 ? 2.405 : -2.405, 1.4 + w * 1.35, 0.7);
         windowMesh.rotation.y = side < 0 ? Math.PI / 2 : -Math.PI / 2;
         group.add(windowMesh);
       }
       group.position.set(side * (10 + (i % 3)), 0, 7 - Math.floor(i / 2) * 10.4);
+      group.userData.isBuilding = true;
       scene.add(group);
       movers.push(group);
+    }
+
+    const poleMaterial = new THREE.MeshStandardMaterial({ color: '#34495b', roughness: 0.72 });
+    const lampMaterial = new THREE.MeshStandardMaterial({ color: '#fff0a6', emissive: '#ffc94d', emissiveIntensity: 1.8, roughness: 0.45 });
+    for (const side of [-1, 1]) for (let i = 0; i < 13; i += 1) {
+      const lamp = new THREE.Group();
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.09, 3.25, 10), poleMaterial);
+      pole.position.y = 1.625;
+      pole.castShadow = true;
+      lamp.add(pole);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.08, 0.08), poleMaterial);
+      arm.position.set(-side * 0.3, 3.18, 0);
+      lamp.add(arm);
+      const light = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 8), lampMaterial);
+      light.scale.set(1.35, 0.55, 0.9);
+      light.position.set(-side * 0.62, 3.12, 0);
+      lamp.add(light);
+      lamp.position.set(side * 8.25, 0.16, 12 - i * 14);
+      lamp.userData.isBuilding = true;
+      scene.add(lamp);
+      movers.push(lamp);
     }
 
     const templates: Partial<Record<AssetKind, THREE.Object3D>> = {};
@@ -222,7 +284,12 @@ export default function RunnerGame() {
         : [['main', url, height]] as const;
       Promise.all(urls.map(async ([mode, modelUrl, modelHeight]) => {
         const loaded = await loadModel(modelUrl);
-        return { mode, modelUrl, loaded, visual: fitModel(loaded.scene, modelHeight) };
+        return {
+          mode,
+          modelUrl,
+          loaded,
+          visual: fitModel(loaded.scene, modelHeight, modelUrl === '/models/character3.glb' ? 'n9' : undefined),
+        };
       })).then((loadedVariants) => {
         if (disposed) return;
         templates[kind] = loadedVariants[0].visual;
@@ -572,9 +639,6 @@ export default function RunnerGame() {
           object.position.z += speed * dt;
           if (object.position.z > 18) object.position.z -= object.userData.isBuilding ? 176 : 168;
         });
-        // Building groups use a wider repeat interval than lane dashes.
-        movers.slice(42).forEach((object) => { object.userData.isBuilding = true; });
-
         for (const entity of entities) {
           if (!entity.active) continue;
           entity.object.position.z += speed * dt;
@@ -647,6 +711,7 @@ export default function RunnerGame() {
           finalizeGameOver();
         }
       }
+      placeSun(elapsed);
       renderer.render(scene, camera);
     };
 
@@ -668,6 +733,8 @@ export default function RunnerGame() {
       activeSfx.forEach((sound) => { sound.pause(); sound.src = ''; });
       activeSfx.clear();
       audioApiRef.current = null;
+      sunMaterial.dispose();
+      sunTexture.dispose();
       renderer.dispose();
       mount.replaceChildren();
       apiRef.current = null;
