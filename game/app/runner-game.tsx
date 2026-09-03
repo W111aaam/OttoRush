@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import characterModels from 'virtual:character-models';
@@ -19,6 +20,7 @@ type LoadedModel = { scene: THREE.Object3D; animations: THREE.AnimationClip[] };
 const LANES = [-2.7, 0, 2.7];
 const PLAYER_Z = 3;
 const AIR_ENEMY_BASE_Y = 1.62;
+const GAMEPLAY_ASSET_COUNT = 5;
 
 function fitModel(source: THREE.Object3D, height: number, rotationPivotBone?: string) {
   const model = cloneSkeleton(source);
@@ -53,6 +55,20 @@ function forEachMaterial(object: THREE.Object3D, callback: (material: THREE.Mate
     if (!(child instanceof THREE.Mesh)) return;
     const materials = Array.isArray(child.material) ? child.material : [child.material];
     materials.forEach((material) => callback(material, child));
+  });
+}
+
+function disposeObjectResources(object: THREE.Object3D) {
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    child.geometry.dispose();
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    materials.forEach((material) => {
+      Object.values(material).forEach((value) => {
+        if (value instanceof THREE.Texture) value.dispose();
+      });
+      material.dispose();
+    });
   });
 }
 
@@ -133,8 +149,9 @@ export default function RunnerGame() {
       sunSprite.scale.set(width * pulse, width / (1402 / 1122) * pulse, 1);
       sunMaterial.opacity = 0.9 + Math.sin(time * 5.4) * 0.1;
     };
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    const mobileGpu = window.matchMedia('(max-width: 768px)').matches;
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: mobileGpu ? 'default' : 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobileGpu ? 1.25 : 1.5));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -146,7 +163,7 @@ export default function RunnerGame() {
     const sun = new THREE.DirectionalLight('#fff4d3', 3.7);
     sun.position.set(-9, 16, 11);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.mapSize.set(mobileGpu ? 512 : 1024, mobileGpu ? 512 : 1024);
     sun.shadow.camera.left = -14;
     sun.shadow.camera.right = 14;
     sun.shadow.camera.top = 18;
@@ -229,7 +246,10 @@ export default function RunnerGame() {
 
     const templates: Partial<Record<AssetKind, THREE.Object3D>> = {};
     const entities: Entity[] = [];
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('/draco/');
     const loader = new GLTFLoader();
+    loader.setDRACOLoader(dracoLoader);
     const fbxLoader = new FBXLoader();
     const loadModel = (url: string) => new Promise<LoadedModel>((resolve, reject) => {
       if (url.toLowerCase().endsWith('.fbx')) {
@@ -242,14 +262,19 @@ export default function RunnerGame() {
     const defaultCharacter = characterModels.find((model) => model.id === 1)?.url ?? characterModels[0]?.url ?? '/models/character1.glb';
     const selectedCharacter = savedCharacter && characterModels.some((model) => model.url === savedCharacter) ? savedCharacter : defaultCharacter;
     const usesCompactAnimatedRig = selectedCharacter === '/models/character2.glb' || selectedCharacter === '/models/character3.glb';
-    const characterHeight = usesCompactAnimatedRig ? 2.35 * 0.6 : 2.35;
+    const usesJumpBackflip = usesCompactAnimatedRig;
+    const compactCharacterHeight = 2.35 * 0.6;
+    const characterHeight = selectedCharacter === '/models/character2.glb'
+      ? compactCharacterHeight * 1.12
+      : selectedCharacter === '/models/character3.glb'
+        ? compactCharacterHeight
+        : 2.35;
     const assets: Array<[AssetKind, string, number]> = [
       ['character', selectedCharacter, characterHeight],
       ['coin', '/models/coin.glb', 0.72],
       ['magnet', '/models/daoju1.glb', 1.05],
       ['enemy', '/models/enemy1.glb', 2.15],
       ['enemyAir', '/models/enemy2.glb', 2.75],
-      ['explosion', '/models/se1.glb', 2.7],
     ];
     let disposed = false;
     let characterRoot: THREE.Group | null = null;
@@ -337,6 +362,17 @@ export default function RunnerGame() {
       });
     });
 
+    // The explosion is the largest gameplay asset. It is optional for the
+    // first interaction, so warm it in the background without blocking Start.
+    const loadExplosion = () => {
+      loadModel('/models/se1.glb').then((loaded) => {
+        if (!disposed) templates.explosion = fitModel(loaded.scene, 2.7);
+      }).catch(() => { /* A particle-only fallback is used below. */ });
+    };
+    const requestIdle = (window as unknown as { requestIdleCallback?: (callback: () => void, options: { timeout: number }) => number }).requestIdleCallback;
+    if (requestIdle) requestIdle(loadExplosion, { timeout: 4000 });
+    else window.setTimeout(loadExplosion, 1200);
+
     let currentPhase: Phase = 'menu';
     let lane = 1;
     let targetX = 0;
@@ -358,6 +394,7 @@ export default function RunnerGame() {
     let airSpinProgress = 0;
     let airSpinDirection = 1;
     let airSpinActive = false;
+    let airSpinQueued = false;
     let deathEffect: {
       root: THREE.Group;
       blast: THREE.Object3D;
@@ -373,6 +410,7 @@ export default function RunnerGame() {
       airSpinProgress = 0;
       airSpinDirection = direction;
       airSpinActive = true;
+      airSpinQueued = false;
     };
 
     const clearEntities = () => {
@@ -444,6 +482,7 @@ export default function RunnerGame() {
       lastJumpAt = -Infinity;
       airSpinProgress = 0;
       airSpinActive = false;
+      airSpinQueued = false;
       characterRoot.visible = true;
       characterRoot.position.set(0, 0, PLAYER_Z);
       characterRoot.rotation.set(0, 0, 0);
@@ -451,6 +490,8 @@ export default function RunnerGame() {
       if (characterVisual) {
         setCharacterMode(isCharacter4 ? 'walk' : 'main', true);
         characterVisual.visible = true;
+        characterVisual.position.set(0, 0, 0);
+        characterVisual.rotation.x = 0;
         characterVisual.rotation.y = Math.PI;
         characterVisual.scale.y = characterBaseScaleY;
       }
@@ -481,7 +522,7 @@ export default function RunnerGame() {
     };
 
     const explode = () => {
-      if (currentPhase !== 'playing' || !characterRoot || !templates.explosion) return;
+      if (currentPhase !== 'playing' || !characterRoot || !templates.explosion) return false;
       currentPhase = 'dying';
       setPhase('dying');
       const root = new THREE.Group();
@@ -523,6 +564,7 @@ export default function RunnerGame() {
       scene.add(root);
       characterRoot.visible = false;
       deathEffect = { root, blast, blastBaseScale, light, particles, age: 0, settled: false };
+      return true;
     };
 
     const takeHit = (damage: number, entity: Entity, useExplosion: boolean) => {
@@ -534,8 +576,7 @@ export default function RunnerGame() {
       setLives(gameLives);
       if (gameLives <= 0) {
         playSfx('death');
-        if (useExplosion) explode();
-        else finish();
+        if (!useExplosion || !explode()) finish();
       } else {
         playSfx(Math.random() < 0.5 ? 'hurt1' : 'hurt2');
         invincible = 3;
@@ -550,13 +591,14 @@ export default function RunnerGame() {
       targetX = LANES[lane];
       lastMoveAt = performance.now();
       lastMoveDirection = direction;
-      if (playerY > 0.05 || lastMoveAt - lastJumpAt <= 220) beginAirSpin(direction);
+      if (!usesJumpBackflip && (playerY > 0.05 || lastMoveAt - lastJumpAt <= 220)) beginAirSpin(direction);
     };
     const jump = () => {
       if (currentPhase === 'playing' && playerY < 0.05) {
-        velocityY = 10.5;
+        velocityY = usesJumpBackflip ? 12 : 10.5;
         lastJumpAt = performance.now();
-        if (lastJumpAt - lastMoveAt <= 220) beginAirSpin(lastMoveDirection);
+        if (usesJumpBackflip) airSpinQueued = true;
+        else if (lastJumpAt - lastMoveAt <= 220) beginAirSpin(lastMoveDirection);
       }
     };
     const slide = () => {
@@ -597,6 +639,7 @@ export default function RunnerGame() {
     let frame = 0;
     const render = () => {
       frame = requestAnimationFrame(render);
+      if (document.hidden) return;
       const dt = Math.min(clock.getDelta(), 0.034);
       elapsed += dt;
       characterMixers.forEach((mixer) => mixer.update(dt));
@@ -609,11 +652,20 @@ export default function RunnerGame() {
           spawnAt = Math.max(20, 31 - gameDistance * 0.008);
         }
         characterRoot.position.x = THREE.MathUtils.damp(characterRoot.position.x, targetX, 15, dt);
-        characterRoot.rotation.z = THREE.MathUtils.damp(characterRoot.rotation.z, (targetX - characterRoot.position.x) * -0.09, 10, dt);
+        const laneLean = usesJumpBackflip && (airSpinActive || playerY > 0.05)
+          ? 0
+          : (targetX - characterRoot.position.x) * -0.09;
+        characterRoot.rotation.z = THREE.MathUtils.damp(characterRoot.rotation.z, laneLean, 10, dt);
         velocityY -= 25 * dt;
         playerY = Math.max(0, playerY + velocityY * dt);
-        if (playerY === 0) velocityY = 0;
+        if (playerY === 0) {
+          velocityY = 0;
+          airSpinQueued = false;
+        }
         characterRoot.position.y = playerY + (playerY === 0 ? Math.abs(Math.sin(elapsed * 10)) * 0.06 : 0);
+        if (usesJumpBackflip && airSpinQueued && playerY >= 0.65 && performance.now() - lastJumpAt >= 120) {
+          beginAirSpin(1);
+        }
         sliding = Math.max(0, sliding - dt);
         if (isCharacter4) {
           const nextMode: CharacterMode = sliding > 0 ? 'dog' : playerY > 0.05 ? 'hurdle' : 'walk';
@@ -625,14 +677,28 @@ export default function RunnerGame() {
           18,
           dt,
         );
-        characterVisual.rotation.x = THREE.MathUtils.damp(characterVisual.rotation.x, playerY > 0 ? -0.1 : 0, 8, dt);
         if (airSpinActive) {
-          airSpinProgress = Math.min(1, airSpinProgress + dt / 0.58);
-          characterVisual.rotation.y = Math.PI + airSpinDirection * airSpinProgress * Math.PI * 2;
+          airSpinProgress = Math.min(1, airSpinProgress + dt / (usesJumpBackflip ? 0.62 : 0.58));
+          if (usesJumpBackflip) {
+            const angle = airSpinProgress * Math.PI * 2;
+            const centerY = characterHeight * 0.60;
+            characterVisual.rotation.x = angle;
+            characterVisual.rotation.y = Math.PI;
+            characterVisual.position.y = centerY * (1 - Math.cos(angle));
+            characterVisual.position.z = -centerY * Math.sin(angle);
+          } else {
+            characterVisual.rotation.x = THREE.MathUtils.damp(characterVisual.rotation.x, playerY > 0 ? -0.1 : 0, 8, dt);
+            characterVisual.rotation.y = Math.PI + airSpinDirection * airSpinProgress * Math.PI * 2;
+          }
           if (airSpinProgress >= 1) {
             airSpinActive = false;
+            characterVisual.position.set(0, 0, 0);
+            characterVisual.rotation.x = 0;
             characterVisual.rotation.y = Math.PI;
           }
+        } else {
+          characterVisual.position.set(0, 0, 0);
+          characterVisual.rotation.x = THREE.MathUtils.damp(characterVisual.rotation.x, playerY > 0 ? -0.1 : 0, 8, dt);
         }
         magnet = Math.max(0, magnet - dt);
         invincible = Math.max(0, invincible - dt);
@@ -740,7 +806,14 @@ export default function RunnerGame() {
       audioApiRef.current = null;
       sunMaterial.dispose();
       sunTexture.dispose();
+      disposeObjectResources(scene);
+      Object.values(templates).forEach((template) => {
+        if (template) disposeObjectResources(template);
+      });
+      renderer.renderLists.dispose();
       renderer.dispose();
+      renderer.forceContextLoss();
+      dracoLoader.dispose();
       mount.replaceChildren();
       apiRef.current = null;
     };
@@ -802,7 +875,7 @@ export default function RunnerGame() {
         <section className="start-card">
           <p>三道狂奔 · 金币收集 · 障碍挑战</p>
           <h1>准备好开冲了吗？</h1>
-          <button type="button" disabled={loaded < 6} onClick={startGame}>{loaded < 6 ? `正在载入素材 ${loaded}/6…` : '开始游戏'}</button>
+          <button type="button" disabled={loaded < GAMEPLAY_ASSET_COUNT} onClick={startGame}>{loaded < GAMEPLAY_ASSET_COUNT ? `正在载入素材 ${loaded}/${GAMEPLAY_ASSET_COUNT}…` : '开始游戏'}</button>
           <small>方向键 / WASD · 上滑跳跃 · 下滑下蹲</small>
         </section>
       )}
