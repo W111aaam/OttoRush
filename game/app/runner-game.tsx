@@ -359,13 +359,15 @@ export default function RunnerGame() {
       ? compactCharacterHeight * 1.12
       : selectedCharacter === '/models/character3.glb'
         ? compactCharacterHeight
+        : selectedCharacter === '/models/character5.glb'
+          ? 2.35 * 0.65
         : 2.35;
     const assets: Array<[AssetKind, string, number]> = [
       ['character', selectedCharacter, characterHeight],
       ['coin', '/models/coin.glb', 0.72],
       ['magnet', '/models/daoju1.glb', 1.05],
       ['boost', '/models/daoju2.glb', 1.05],
-      ['stone', '/models/daoju-character5.glb', 0.65],
+      ['stone', '/models/daoju-character5.glb', 0.65 * 1.5],
       ['enemy', '/models/enemy1.glb', 2.15],
       ['enemyAir', '/models/enemy2.glb', 2.75],
     ];
