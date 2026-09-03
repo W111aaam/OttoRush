@@ -21,7 +21,7 @@ const BASE_STATS: CharacterStats = {
 export const CHARACTER_STATS: Record<number, CharacterStats> = {
   1: BASE_STATS,
   2: { ...BASE_STATS, speed: 3, growth: 3, speedMultiplier: 1.2, scoreMultiplier: 1.4 },
-  3: { ...BASE_STATS, health: 3, growth: 3 },
+  3: { ...BASE_STATS, health: 3, growth: 2 },
   4: { ...BASE_STATS, dodge: 1, dodgeChance: 0.5 },
 };
 

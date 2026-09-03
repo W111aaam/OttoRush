@@ -12,7 +12,7 @@ import { characterIdFromUrl, getCharacterStats } from '@/lib/character-stats';
 type Phase = 'menu' | 'playing' | 'paused' | 'dying' | 'gameover';
 type EntityKind = 'coin' | 'magnet' | 'boost' | 'enemy' | 'enemyAir';
 type AssetKind = EntityKind | 'character' | 'explosion';
-type Entity = { kind: EntityKind; lane: number; object: THREE.Object3D; active: boolean };
+type Entity = { kind: EntityKind; lane: number; object: THREE.Object3D; active: boolean; grazeCandidate: boolean; grazeAwarded: boolean };
 type GameApi = { start: () => void; pause: () => void; resume: () => void; move: (direction: number) => void; jump: () => void; slide: () => void };
 type AudioApi = { setMusicVolume: (volume: number) => void; setSfxVolume: (volume: number) => void; ensureMusic: () => void };
 type CharacterMode = 'main' | 'walk' | 'hurdle' | 'dog';
@@ -23,6 +23,8 @@ const LANES = [-2.7, 0, 2.7];
 const PLAYER_Z = 3;
 const AIR_ENEMY_BASE_Y = 1.62;
 const GAMEPLAY_ASSET_COUNT = 6;
+const GRAZE_REWARD = 700;
+const GRAZE_LEAD_SECONDS = 0.14;
 
 function fitModel(source: THREE.Object3D, height: number, rotationPivotBone?: string) {
   const model = cloneSkeleton(source);
@@ -336,6 +338,9 @@ export default function RunnerGame() {
     let dodgeLabel: THREE.Sprite | null = null;
     let dodgeLabelTexture: THREE.CanvasTexture | null = null;
     let dodgeLabelMaterial: THREE.SpriteMaterial | null = null;
+    let grazeLabel: THREE.Sprite | null = null;
+    let grazeLabelTexture: THREE.CanvasTexture | null = null;
+    let grazeLabelMaterial: THREE.SpriteMaterial | null = null;
     const setDodgeVisual = (active: boolean) => {
       Object.values(characterVariants).forEach((variant) => {
         forEachMaterial(variant, (material) => {
@@ -450,6 +455,31 @@ export default function RunnerGame() {
             dodgeLabel.visible = false;
             characterRoot.add(dodgeLabel);
           }
+          const grazeCanvas = document.createElement('canvas');
+          grazeCanvas.width = 384;
+          grazeCanvas.height = 96;
+          const grazeContext = grazeCanvas.getContext('2d');
+          if (grazeContext) {
+            grazeContext.font = '900 46px Arial, sans-serif';
+            grazeContext.textAlign = 'center';
+            grazeContext.textBaseline = 'middle';
+            grazeContext.shadowColor = 'rgba(16, 35, 59, .9)';
+            grazeContext.shadowBlur = 9;
+            grazeContext.lineWidth = 7;
+            grazeContext.strokeStyle = 'rgba(16, 35, 59, .72)';
+            grazeContext.strokeText('险避 +700', 192, 48);
+            grazeContext.fillStyle = '#ffffff';
+            grazeContext.fillText('险避 +700', 192, 48);
+          }
+          grazeLabelTexture = new THREE.CanvasTexture(grazeCanvas);
+          grazeLabelTexture.colorSpace = THREE.SRGBColorSpace;
+          grazeLabelMaterial = new THREE.SpriteMaterial({ map: grazeLabelTexture, transparent: true, depthTest: false });
+          grazeLabel = new THREE.Sprite(grazeLabelMaterial);
+          grazeLabel.position.set(characterHeight * 0.48, characterHeight + 0.38, 0);
+          grazeLabel.scale.set(2.2, 0.55, 1);
+          grazeLabel.renderOrder = 21;
+          grazeLabel.visible = false;
+          characterRoot.add(grazeLabel);
           characterRoot.position.set(0, 0, PLAYER_Z);
           scene.add(characterRoot);
         }
@@ -486,6 +516,7 @@ export default function RunnerGame() {
     let magnet = 0;
     let boost = 0;
     let boostBonusScore = 0;
+    let grazeBonusScore = 0;
     let previousBaseScore = 0;
     let spawnAt = 15;
     let lastHud = 0;
@@ -498,6 +529,7 @@ export default function RunnerGame() {
     let airSpinActive = false;
     let airSpinQueued = false;
     let dodgeTime = 0;
+    let grazeTextTime = 0;
     let deathEffect: {
       root: THREE.Group;
       blast: THREE.Object3D;
@@ -514,6 +546,14 @@ export default function RunnerGame() {
       airSpinDirection = direction;
       airSpinActive = true;
       airSpinQueued = false;
+    };
+
+    const awardGraze = (entity: Entity) => {
+      if (entity.grazeAwarded) return;
+      entity.grazeAwarded = true;
+      grazeBonusScore += GRAZE_REWARD;
+      grazeTextTime = 1;
+      if (grazeLabel) grazeLabel.visible = true;
     };
 
     const clearEntities = () => {
@@ -535,7 +575,7 @@ export default function RunnerGame() {
       const height = kind === 'coin' ? 0.72 : kind === 'enemyAir' ? AIR_ENEMY_BASE_Y : 0;
       holder.position.set(LANES[laneIndex], height, z);
       scene.add(holder);
-      entities.push({ kind, lane: laneIndex, object: holder, active: true });
+      entities.push({ kind, lane: laneIndex, object: holder, active: true, grazeCandidate: false, grazeAwarded: false });
     };
 
     const spawnPattern = () => {
@@ -585,6 +625,7 @@ export default function RunnerGame() {
       magnet = 0;
       boost = 0;
       boostBonusScore = 0;
+      grazeBonusScore = 0;
       previousBaseScore = 0;
       spawnAt = 8;
       lastMoveAt = -Infinity;
@@ -593,7 +634,9 @@ export default function RunnerGame() {
       airSpinActive = false;
       airSpinQueued = false;
       dodgeTime = 0;
+      grazeTextTime = 0;
       setDodgeVisual(false);
+      if (grazeLabel) grazeLabel.visible = false;
       characterRoot.visible = true;
       characterRoot.position.set(0, 0, PLAYER_Z);
       characterRoot.rotation.set(0, 0, 0);
@@ -619,7 +662,7 @@ export default function RunnerGame() {
 
     const finalizeGameOver = () => {
       currentPhase = 'gameover';
-      gameScore = Math.floor(gameDistance * 3 + gameCoins * 25) + boostBonusScore;
+      gameScore = Math.floor((gameDistance * 3 + gameCoins * 25) * selectedStats.scoreMultiplier) + boostBonusScore + grazeBonusScore;
       const nextBest = Math.max(Number(localStorage.getItem('otto-runner-best') || 0), gameScore);
       localStorage.setItem('otto-runner-best', String(nextBest));
       setBest(nextBest);
@@ -825,6 +868,8 @@ export default function RunnerGame() {
         const wasDodging = dodgeTime > 0;
         dodgeTime = Math.max(0, dodgeTime - dt);
         if (wasDodging && dodgeTime === 0) setDodgeVisual(false);
+        grazeTextTime = Math.max(0, grazeTextTime - dt);
+        if (grazeLabel) grazeLabel.visible = grazeTextTime > 0;
         magnet = Math.max(0, magnet - dt);
         boost = Math.max(0, boost - dt);
         invincible = Math.max(0, invincible - dt);
@@ -874,9 +919,25 @@ export default function RunnerGame() {
           } else if (entity.kind === 'enemyAir') {
             entity.object.position.y = AIR_ENEMY_BASE_Y + Math.sin(elapsed * 4.5) * 0.08;
             entity.object.rotation.y = Math.sin(elapsed * 2.2) * 0.16;
-            if (Math.abs(dz) < 0.95 && Math.abs(dx) < 1.15 && sliding <= 0.08) takeHit(2, entity, true);
-          } else if (Math.abs(dz) < 0.9 && Math.abs(dx) < 1.15 && playerY < 1.15) {
-            takeHit(1, entity, false);
+            const dangerLead = speed * GRAZE_LEAD_SECONDS;
+            if (dz >= -(0.95 + dangerLead) && dz < -0.95 && Math.abs(dx) < 1.15 && sliding <= 0.08) {
+              entity.grazeCandidate = true;
+            }
+            const hit = Math.abs(dz) < 0.95 && Math.abs(dx) < 1.15 && sliding <= 0.08;
+            if (hit) takeHit(2, entity, true);
+            if (entity.active && entity.grazeCandidate && !entity.grazeAwarded && dz > 0.95) {
+              awardGraze(entity);
+            }
+          } else {
+            const dangerLead = speed * GRAZE_LEAD_SECONDS;
+            if (dz >= -(0.9 + dangerLead) && dz < -0.9 && Math.abs(dx) < 1.15 && playerY < 1.15) {
+              entity.grazeCandidate = true;
+            }
+            const hit = Math.abs(dz) < 0.9 && Math.abs(dx) < 1.15 && playerY < 1.15;
+            if (hit) takeHit(1, entity, false);
+            if (entity.active && entity.grazeCandidate && !entity.grazeAwarded && dz > 0.9) {
+              awardGraze(entity);
+            }
           }
           if (entity.object.position.z > 15) {
             entity.active = false;
@@ -887,7 +948,7 @@ export default function RunnerGame() {
         const baseScore = Math.floor((gameDistance * 3 + gameCoins * 25) * selectedStats.scoreMultiplier);
         if (boost > 0) boostBonusScore += Math.max(0, baseScore - previousBaseScore);
         previousBaseScore = baseScore;
-        gameScore = baseScore + boostBonusScore;
+        gameScore = baseScore + boostBonusScore + grazeBonusScore;
         if (elapsed - lastHud > 0.12) {
           lastHud = elapsed;
           setDistance(Math.floor(gameDistance));
@@ -955,6 +1016,8 @@ export default function RunnerGame() {
       dracoLoader.dispose();
       dodgeLabelMaterial?.dispose();
       dodgeLabelTexture?.dispose();
+      grazeLabelMaterial?.dispose();
+      grazeLabelTexture?.dispose();
       mount.replaceChildren();
       apiRef.current = null;
     };
