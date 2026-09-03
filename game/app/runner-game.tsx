@@ -9,7 +9,7 @@ import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.j
 import characterModels from 'virtual:character-models';
 
 type Phase = 'menu' | 'playing' | 'paused' | 'dying' | 'gameover';
-type EntityKind = 'coin' | 'magnet' | 'enemy' | 'enemyAir';
+type EntityKind = 'coin' | 'magnet' | 'boost' | 'enemy' | 'enemyAir';
 type AssetKind = EntityKind | 'character' | 'explosion';
 type Entity = { kind: EntityKind; lane: number; object: THREE.Object3D; active: boolean };
 type GameApi = { start: () => void; pause: () => void; resume: () => void; move: (direction: number) => void; jump: () => void; slide: () => void };
@@ -20,7 +20,7 @@ type LoadedModel = { scene: THREE.Object3D; animations: THREE.AnimationClip[] };
 const LANES = [-2.7, 0, 2.7];
 const PLAYER_Z = 3;
 const AIR_ENEMY_BASE_Y = 1.62;
-const GAMEPLAY_ASSET_COUNT = 5;
+const GAMEPLAY_ASSET_COUNT = 6;
 
 function fitModel(source: THREE.Object3D, height: number, rotationPivotBone?: string) {
   const model = cloneSkeleton(source);
@@ -84,6 +84,7 @@ export default function RunnerGame() {
   const [coins, setCoins] = useState(0);
   const [distance, setDistance] = useState(0);
   const [magnetTime, setMagnetTime] = useState(0);
+  const [boostTime, setBoostTime] = useState(0);
   const [lives, setLives] = useState(2);
   const [best, setBest] = useState(0);
   const [musicVolume, setMusicVolume] = useState(0.45);
@@ -273,6 +274,7 @@ export default function RunnerGame() {
       ['character', selectedCharacter, characterHeight],
       ['coin', '/models/coin.glb', 0.72],
       ['magnet', '/models/daoju1.glb', 1.05],
+      ['boost', '/models/daoju2.glb', 1.05],
       ['enemy', '/models/enemy1.glb', 2.15],
       ['enemyAir', '/models/enemy2.glb', 2.75],
     ];
@@ -289,6 +291,12 @@ export default function RunnerGame() {
       const next = characterVariants[mode] ?? characterVariants.main;
       if (!next) return;
       Object.values(characterVariants).forEach((variant) => { variant.visible = variant === next; });
+      // Each Character4 variant is a separate scene graph. A variant can be
+      // hidden halfway through an air spin, so never let its temporary facing
+      // survive the next mode switch.
+      next.position.set(0, 0, 0);
+      next.rotation.x = 0;
+      next.rotation.y = Math.PI;
       characterVisual = next;
       characterBaseScaleY = next.scale.y;
       if (characterMode !== mode || restartAnimation) {
@@ -385,6 +393,9 @@ export default function RunnerGame() {
     let gameLives = 2;
     let invincible = 0;
     let magnet = 0;
+    let boost = 0;
+    let boostBonusScore = 0;
+    let previousBaseScore = 0;
     let spawnAt = 15;
     let lastHud = 0;
     let elapsed = 0;
@@ -436,7 +447,7 @@ export default function RunnerGame() {
     };
 
     const spawnPattern = () => {
-      const pattern = Math.floor(Math.random() * 7);
+      const pattern = Math.floor(Math.random() * 8);
       const baseLane = Math.floor(Math.random() * 3);
       const z = -72;
       if (pattern <= 1) {
@@ -453,6 +464,9 @@ export default function RunnerGame() {
         for (let i = 0; i < 5; i += 1) addEntity('coin', i % 2 ? (baseLane + 1) % 3 : baseLane, z - i * 2.5);
         addEntity('magnet', (baseLane + 2) % 3, z - 4.5);
       } else if (pattern === 5) {
+        for (let i = 0; i < 5; i += 1) addEntity('coin', baseLane, z - i * 2.2);
+        addEntity('boost', (baseLane + 1) % 3, z - 4.5);
+      } else if (pattern === 6) {
         addEntity('enemyAir', baseLane, z);
         for (let i = 0; i < 5; i += 1) addEntity('coin', baseLane, z - 3.5 - i * 2.2);
       } else {
@@ -477,6 +491,9 @@ export default function RunnerGame() {
       gameLives = 2;
       invincible = 0;
       magnet = 0;
+      boost = 0;
+      boostBonusScore = 0;
+      previousBaseScore = 0;
       spawnAt = 8;
       lastMoveAt = -Infinity;
       lastJumpAt = -Infinity;
@@ -499,6 +516,7 @@ export default function RunnerGame() {
       setCoins(0);
       setDistance(0);
       setMagnetTime(0);
+      setBoostTime(0);
       setLives(2);
       setPhase('playing');
       ensureMusic();
@@ -507,7 +525,7 @@ export default function RunnerGame() {
 
     const finalizeGameOver = () => {
       currentPhase = 'gameover';
-      gameScore = Math.floor(gameDistance * 3 + gameCoins * 25);
+      gameScore = Math.floor(gameDistance * 3 + gameCoins * 25) + boostBonusScore;
       const nextBest = Math.max(Number(localStorage.getItem('otto-runner-best') || 0), gameScore);
       localStorage.setItem('otto-runner-best', String(nextBest));
       setBest(nextBest);
@@ -644,7 +662,8 @@ export default function RunnerGame() {
       elapsed += dt;
       characterMixers.forEach((mixer) => mixer.update(dt));
       if (currentPhase === 'playing' && characterRoot && characterVisual) {
-        const speed = Math.min(16.5 + gameDistance / 85, 28);
+        const baseSpeed = Math.min(16.5 + gameDistance / 85, 28);
+        const speed = baseSpeed * (boost > 0 ? 1.3 : 1);
         gameDistance += speed * dt;
         spawnAt -= speed * dt;
         if (spawnAt <= 0) {
@@ -661,6 +680,7 @@ export default function RunnerGame() {
         if (playerY === 0) {
           velocityY = 0;
           airSpinQueued = false;
+          if (isCharacter4 && !airSpinActive) characterVisual.rotation.y = Math.PI;
         }
         characterRoot.position.y = playerY + (playerY === 0 ? Math.abs(Math.sin(elapsed * 10)) * 0.06 : 0);
         if (usesJumpBackflip && airSpinQueued && playerY >= 0.65 && performance.now() - lastJumpAt >= 120) {
@@ -699,8 +719,10 @@ export default function RunnerGame() {
         } else {
           characterVisual.position.set(0, 0, 0);
           characterVisual.rotation.x = THREE.MathUtils.damp(characterVisual.rotation.x, playerY > 0 ? -0.1 : 0, 8, dt);
+          if (isCharacter4) characterVisual.rotation.y = Math.PI;
         }
         magnet = Math.max(0, magnet - dt);
+        boost = Math.max(0, boost - dt);
         invincible = Math.max(0, invincible - dt);
         if (currentPhase === 'playing') {
           characterVisual.visible = invincible <= 0 || Math.floor(invincible * 12) % 2 === 0;
@@ -736,6 +758,15 @@ export default function RunnerGame() {
               entity.object.position.z = 20;
               magnet = 8;
             }
+          } else if (entity.kind === 'boost') {
+            entity.object.rotation.y += dt * 3.6;
+            entity.object.position.y = 0.12 + Math.sin(elapsed * 6) * 0.1;
+            if (Math.abs(dz) < 1.1 && Math.abs(dx) < 1.05) {
+              entity.active = false;
+              scene.remove(entity.object);
+              entity.object.position.z = 20;
+              boost = 10;
+            }
           } else if (entity.kind === 'enemyAir') {
             entity.object.position.y = AIR_ENEMY_BASE_Y + Math.sin(elapsed * 4.5) * 0.08;
             entity.object.rotation.y = Math.sin(elapsed * 2.2) * 0.16;
@@ -749,13 +780,17 @@ export default function RunnerGame() {
           }
         }
         for (let i = entities.length - 1; i >= 0; i -= 1) if (!entities[i].active && entities[i].object.position.z > 15) entities.splice(i, 1);
-        gameScore = Math.floor(gameDistance * 3 + gameCoins * 25);
+        const baseScore = Math.floor(gameDistance * 3 + gameCoins * 25);
+        if (boost > 0) boostBonusScore += Math.max(0, baseScore - previousBaseScore);
+        previousBaseScore = baseScore;
+        gameScore = baseScore + boostBonusScore;
         if (elapsed - lastHud > 0.12) {
           lastHud = elapsed;
           setDistance(Math.floor(gameDistance));
           setCoins(gameCoins);
           setScore(gameScore);
           setMagnetTime(Math.ceil(magnet));
+          setBoostTime(Math.ceil(boost));
         }
         camera.position.x = THREE.MathUtils.damp(camera.position.x, characterRoot.position.x * 0.2, 3, dt);
       }
@@ -869,7 +904,12 @@ export default function RunnerGame() {
         ) : <div className="preview-pill">第二阶段 · 玩法完善</div>}
       </header>
 
-      {phase === 'playing' && magnetTime > 0 && <div className="power-pill">✦ 金币磁铁 <b>{magnetTime}s</b></div>}
+      {phase === 'playing' && (magnetTime > 0 || boostTime > 0) && (
+        <div className="power-stack">
+          {magnetTime > 0 && <div className="power-pill">✦ 金币磁铁 <b>{magnetTime}s</b></div>}
+          {boostTime > 0 && <div className="power-pill power-pill-boost">⚡ 双倍得分 <b>{boostTime}s</b></div>}
+        </div>
+      )}
 
       {phase === 'menu' && (
         <section className="start-card">

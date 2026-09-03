@@ -27,7 +27,9 @@ button { font: inherit; }
 .hud .coin-stat { flex-direction: row; gap: 7px; min-width: auto; }
 .hud .life-stat b { color: #ff5b55; font-size: 20px; letter-spacing: .08em; text-shadow: 0 1px 0 white; }
 .coin-stat i { width: 17px; height: 17px; border: 3px solid #fff0a4; border-radius: 50%; background: #ffc42e; box-shadow: 0 0 0 2px #d98b00; }
-.power-pill { position: absolute; z-index: 4; top: 92px; left: 50%; transform: translateX(-50%); padding: 9px 16px; color: #6d3700; background: linear-gradient(180deg, #fff6a8, #ffcf35); border: 2px solid white; border-radius: 999px; box-shadow: 0 5px 0 rgba(142,78,0,.24); font-size: 13px; font-weight: 850; }
+.power-stack { position: absolute; z-index: 4; top: 92px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; }
+.power-pill { padding: 9px 16px; color: #6d3700; white-space: nowrap; background: linear-gradient(180deg, #fff6a8, #ffcf35); border: 2px solid white; border-radius: 999px; box-shadow: 0 5px 0 rgba(142,78,0,.24); font-size: 13px; font-weight: 850; }
+.power-pill-boost { color: #fff; background: linear-gradient(180deg, #ff8d54, #ed3f2f); box-shadow: 0 5px 0 rgba(124,30,18,.3); }
 .result-card h1 { margin-bottom: 12px; color: #e6532e; font-size: clamp(42px, 9vw, 66px); }
 .result-card h1 small { display: inline; margin: 0; color: #7f4938; font-size: 16px; }
 .result-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 0 18px; }
@@ -84,7 +86,7 @@ button.skin-card:hover { transform: translateY(-5px) rotate(-1deg); }
   .hud .coin-stat { min-width: 48px; }
   .start-card { bottom: 22px; padding: 17px; }
   .mobile-controls { display: grid; }
-  .power-pill { top: 78px; }
+  .power-stack { top: 78px; }
   .corner-controls { right: 14px; bottom: 84px; }
   .round-control { width: 48px; height: 48px; }
   .audio-control { width: 48px; }
