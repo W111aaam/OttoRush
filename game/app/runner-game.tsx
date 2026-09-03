@@ -10,10 +10,10 @@ import characterModels from 'virtual:character-models';
 import { characterIdFromUrl, getCharacterName, getCharacterStats } from '@/lib/character-stats';
 
 type Phase = 'menu' | 'playing' | 'paused' | 'dying' | 'gameover';
-type EntityKind = 'coin' | 'magnet' | 'boost' | 'enemy' | 'enemyAir';
+type EntityKind = 'coin' | 'magnet' | 'boost' | 'stone' | 'enemy' | 'enemyAir';
 type AssetKind = EntityKind | 'character' | 'explosion';
 type Entity = { kind: EntityKind; lane: number; object: THREE.Object3D; active: boolean; grazeCandidate: boolean; grazeAwarded: boolean };
-type GameApi = { start: () => void; pause: () => void; resume: () => void; move: (direction: number) => void; jump: () => void; slide: () => void };
+type GameApi = { start: () => void; pause: () => void; resume: () => void; move: (direction: number) => void; jump: () => void; slide: () => void; throwStone: () => void };
 type AudioApi = { setMusicVolume: (volume: number) => void; setSfxVolume: (volume: number) => void; ensureMusic: () => void };
 type CharacterMode = 'main' | 'walk' | 'hurdle' | 'dog';
 type LoadedModel = { scene: THREE.Object3D; animations: THREE.AnimationClip[] };
@@ -22,7 +22,7 @@ type LeaderboardEntry = { rank: number; playerId: string; playerName: string; sc
 const LANES = [-2.7, 0, 2.7];
 const PLAYER_Z = 3;
 const AIR_ENEMY_BASE_Y = 1.62;
-const GAMEPLAY_ASSET_COUNT = 6;
+const GAMEPLAY_ASSET_COUNT = 7;
 const GRAZE_REWARD = 700;
 const GRAZE_LEAD_SECONDS = 0.14;
 
@@ -89,6 +89,8 @@ export default function RunnerGame() {
   const [distance, setDistance] = useState(0);
   const [magnetTime, setMagnetTime] = useState(0);
   const [boostTime, setBoostTime] = useState(0);
+  const [stoneReady, setStoneReady] = useState(false);
+  const [character5Active, setCharacter5Active] = useState(false);
   const [lives, setLives] = useState(2);
   const [maxLives, setMaxLives] = useState(2);
   const [best, setBest] = useState(0);
@@ -347,7 +349,9 @@ export default function RunnerGame() {
     const selectedCharacter = savedCharacter && characterModels.some((model) => model.url === savedCharacter) ? savedCharacter : defaultCharacter;
     const selectedCharacterId = characterIdFromUrl(selectedCharacter);
     const selectedStats = getCharacterStats(selectedCharacterId);
+    const isCharacter5 = selectedCharacterId === 5;
     setMaxLives(selectedStats.health);
+    setCharacter5Active(isCharacter5);
     const usesCompactAnimatedRig = selectedCharacter === '/models/character2.glb' || selectedCharacter === '/models/character3.glb';
     const usesJumpBackflip = usesCompactAnimatedRig;
     const compactCharacterHeight = 2.35 * 0.6;
@@ -361,6 +365,7 @@ export default function RunnerGame() {
       ['coin', '/models/coin.glb', 0.72],
       ['magnet', '/models/daoju1.glb', 1.05],
       ['boost', '/models/daoju2.glb', 1.05],
+      ['stone', '/models/daoju-character5.glb', 0.65],
       ['enemy', '/models/enemy1.glb', 2.15],
       ['enemyAir', '/models/enemy2.glb', 2.75],
     ];
@@ -569,6 +574,8 @@ export default function RunnerGame() {
     let dodgeTime = 0;
     let grazeTextTime = 0;
     let nextCoinSfxAt = 0;
+    let hasStone = false;
+    let thrownStone: { object: THREE.Object3D; start: THREE.Vector3; target: THREE.Vector3; age: number } | null = null;
     let lebronActive = false;
     let sunEasterEggUsed = false;
     let deathEffect: {
@@ -600,6 +607,10 @@ export default function RunnerGame() {
     const clearEntities = () => {
       entities.forEach((entity) => scene.remove(entity.object));
       entities.length = 0;
+      if (thrownStone) {
+        scene.remove(thrownStone.object);
+        thrownStone = null;
+      }
       if (deathEffect) {
         scene.remove(deathEffect.root);
         deathEffect = null;
@@ -613,7 +624,7 @@ export default function RunnerGame() {
       const visual = template.clone(true);
       if (kind === 'coin') visual.rotation.y = Math.PI / 2;
       holder.add(visual);
-      const height = kind === 'coin' ? 0.72 : kind === 'enemyAir' ? AIR_ENEMY_BASE_Y : 0;
+      const height = kind === 'coin' ? 0.72 : kind === 'stone' ? 0.18 : kind === 'enemyAir' ? AIR_ENEMY_BASE_Y : 0;
       holder.position.set(LANES[laneIndex], height, z);
       scene.add(holder);
       entities.push({ kind, lane: laneIndex, object: holder, active: true, grazeCandidate: false, grazeAwarded: false });
@@ -647,6 +658,10 @@ export default function RunnerGame() {
         addEntity('enemy', (baseLane + 1) % 3, z - 1.5);
         for (let i = 0; i < 5; i += 1) addEntity('coin', (baseLane + 2) % 3, z - i * 2.2);
       }
+      const stoneOnRoad = entities.some((entity) => entity.active && entity.kind === 'stone');
+      if (isCharacter5 && !hasStone && !stoneOnRoad && Math.random() < 0.35) {
+        addEntity('stone', Math.floor(Math.random() * 3), z - 8);
+      }
     };
 
     const start = () => {
@@ -678,6 +693,8 @@ export default function RunnerGame() {
       dodgeTime = 0;
       grazeTextTime = 0;
       sunEasterEggUsed = false;
+      hasStone = false;
+      setStoneReady(false);
       setDodgeVisual(false);
       if (grazeLabel) grazeLabel.visible = false;
       characterRoot.visible = true;
@@ -808,7 +825,7 @@ export default function RunnerGame() {
     };
     const slide = () => {
       if (currentPhase !== 'playing') return;
-      if (playerY >= 0.15) {
+      if (playerY >= 0.15 && characterVisual) {
         fastDropSpeed = playerY / 0.2;
         airSpinQueued = false;
         airSpinActive = false;
@@ -819,6 +836,25 @@ export default function RunnerGame() {
       }
       if (sliding <= 0.05) playSfx('hidden');
       sliding = 0.72;
+    };
+    const throwStone = () => {
+      if (currentPhase !== 'playing' || !isCharacter5 || !hasStone || !characterRoot || !templates.stone) return;
+      const target = entities
+        .filter((entity) => entity.active && (entity.kind === 'enemy' || entity.kind === 'enemyAir') && entity.object.position.z < PLAYER_Z)
+        .sort((left, right) => right.object.position.z - left.object.position.z)[0];
+      if (!target) return;
+      const projectile = templates.stone.clone(true);
+      const startPosition = new THREE.Vector3(characterRoot.position.x, characterRoot.position.y + 1.15, PLAYER_Z - 0.35);
+      const targetPosition = target.object.position.clone();
+      targetPosition.y += target.kind === 'enemyAir' ? 0.8 : 0.65;
+      projectile.position.copy(startPosition);
+      scene.add(projectile);
+      thrownStone = { object: projectile, start: startPosition, target: targetPosition, age: 0 };
+      target.active = false;
+      scene.remove(target.object);
+      target.object.position.z = 20;
+      hasStone = false;
+      setStoneReady(false);
     };
     const pause = () => {
       if (currentPhase !== 'playing') return;
@@ -834,7 +870,7 @@ export default function RunnerGame() {
       ensureMusic();
       playSfx('default');
     };
-    apiRef.current = { start, pause, resume, move, jump, slide };
+    apiRef.current = { start, pause, resume, move, jump, slide, throwStone };
 
     const restoreSunEasterEgg = () => {
       if (!lebronActive) return;
@@ -874,6 +910,7 @@ export default function RunnerGame() {
       else if (['ArrowRight', 'd', 'D'].includes(event.key)) move(1);
       else if (['ArrowUp', 'w', 'W', ' '].includes(event.key)) jump();
       else if (['ArrowDown', 's', 'S'].includes(event.key)) slide();
+      else if (event.key === 'e' || event.key === 'E') throwStone();
       else if (event.key === 'Enter' && (currentPhase === 'menu' || currentPhase === 'gameover')) start();
       else if (event.key === 'Escape' && currentPhase === 'playing') pause();
       else if (event.key === 'Escape' && currentPhase === 'paused') resume();
@@ -899,6 +936,18 @@ export default function RunnerGame() {
           spawnAt = Math.max(20, 31 - gameDistance * 0.008);
         }
         characterRoot.position.x = THREE.MathUtils.damp(characterRoot.position.x, targetX, 15, dt);
+        if (thrownStone) {
+          thrownStone.age += dt;
+          const progress = Math.min(1, thrownStone.age / 0.34);
+          thrownStone.object.position.lerpVectors(thrownStone.start, thrownStone.target, progress);
+          thrownStone.object.position.y += Math.sin(progress * Math.PI) * 1.2;
+          thrownStone.object.rotation.x += dt * 15;
+          thrownStone.object.rotation.z += dt * 11;
+          if (progress >= 1) {
+            scene.remove(thrownStone.object);
+            thrownStone = null;
+          }
+        }
         const laneLean = usesJumpBackflip && (airSpinActive || playerY > 0.05)
           ? 0
           : (targetX - characterRoot.position.x) * -0.09;
@@ -1011,6 +1060,16 @@ export default function RunnerGame() {
               entity.object.position.z = 20;
               boost = 10;
               playSfx('boost');
+            }
+          } else if (entity.kind === 'stone') {
+            entity.object.rotation.y += dt * 3.2;
+            entity.object.position.y = 0.18 + Math.sin(elapsed * 5.5) * 0.08;
+            if (!hasStone && Math.abs(dz) < 1.1 && Math.abs(dx) < 1.05) {
+              entity.active = false;
+              scene.remove(entity.object);
+              entity.object.position.z = 20;
+              hasStone = true;
+              setStoneReady(true);
             }
           } else if (entity.kind === 'enemyAir') {
             entity.object.position.y = AIR_ENEMY_BASE_Y + Math.sin(elapsed * 4.5) * 0.08;
@@ -1179,6 +1238,7 @@ export default function RunnerGame() {
           {boostTime > 0 && <div className="power-pill power-pill-boost">⚡ 双倍得分 <b>{boostTime}s</b></div>}
         </div>
       )}
+      {phase === 'playing' && character5Active && stoneReady && <div className="stone-status">● 石头已就绪 · E 投掷</div>}
 
       {phase === 'menu' && (
         <section className="start-card">
@@ -1234,11 +1294,12 @@ export default function RunnerGame() {
       )}
 
       {phase === 'playing' && (
-        <div className="mobile-controls" aria-label="游戏控制">
+        <div className={`mobile-controls ${character5Active ? 'has-throw' : ''}`} aria-label="游戏控制">
           <button type="button" onClick={() => apiRef.current?.move(-1)} aria-label="向左">←</button>
           <button type="button" onClick={() => apiRef.current?.jump()} aria-label="跳跃">↑</button>
           <button type="button" onClick={() => apiRef.current?.slide()} aria-label="下蹲">↓</button>
           <button type="button" onClick={() => apiRef.current?.move(1)} aria-label="向右">→</button>
+          {character5Active && <button type="button" className="throw-control" disabled={!stoneReady} onClick={() => apiRef.current?.throwStone()} aria-label="投掷石头">投掷</button>}
         </div>
       )}
 

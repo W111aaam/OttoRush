@@ -23,6 +23,7 @@ export const CHARACTER_STATS: Record<number, CharacterStats> = {
   2: { ...BASE_STATS, speed: 3, growth: 3, speedMultiplier: 1.2, scoreMultiplier: 1.4 },
   3: { ...BASE_STATS, health: 3, growth: 2 },
   4: { ...BASE_STATS, dodge: 1, dodgeChance: 0.5 },
+  5: { ...BASE_STATS, speed: 3, speedMultiplier: 1.2 },
 };
 
 export const CHARACTER_NAMES: Record<number, string> = {
@@ -30,6 +31,7 @@ export const CHARACTER_NAMES: Record<number, string> = {
   2: '哈基米',
   3: '曼波',
   4: '龙哥',
+  5: '凑企鹅',
 };
 
 export function getCharacterName(characterId: number) {

@@ -30,6 +30,7 @@ button { font: inherit; }
 .power-stack { position: absolute; z-index: 4; top: 92px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; }
 .power-pill { padding: 9px 16px; color: #6d3700; white-space: nowrap; background: linear-gradient(180deg, #fff6a8, #ffcf35); border: 2px solid white; border-radius: 999px; box-shadow: 0 5px 0 rgba(142,78,0,.24); font-size: 13px; font-weight: 850; }
 .power-pill-boost { color: #fff; background: linear-gradient(180deg, #ff8d54, #ed3f2f); box-shadow: 0 5px 0 rgba(124,30,18,.3); }
+.stone-status { position: absolute; z-index: 5; top: 142px; left: 50%; transform: translateX(-50%); padding: 8px 14px; color: white; white-space: nowrap; background: rgba(16,35,59,.82); border: 2px solid rgba(255,255,255,.8); border-radius: 999px; box-shadow: 0 5px 16px rgba(6,22,39,.25); font-size: 12px; font-weight: 900; }
 .result-card h1 { margin-bottom: 12px; color: #e6532e; font-size: clamp(42px, 9vw, 66px); }
 .result-card { max-height: calc(100vh - 40px); overflow-y: auto; }
 .result-card h1 small { display: inline; margin: 0; color: #7f4938; font-size: 16px; }
@@ -66,6 +67,9 @@ button { font: inherit; }
 .pause-actions .restart-button { color: var(--ink); background: rgba(255,248,220,.92); box-shadow: 0 5px 0 rgba(140,89,0,.28); }
 .mobile-controls { position: absolute; z-index: 5; left: 50%; bottom: 22px; display: none; grid-template-columns: repeat(4, 1fr); gap: 8px; width: min(330px, calc(100% - 28px)); transform: translateX(-50%); }
 .mobile-controls button { height: 48px; border: 1px solid rgba(255,255,255,.55); border-radius: 14px; color: white; background: rgba(16,35,59,.67); box-shadow: 0 4px 0 rgba(0,0,0,.2); font-size: 22px; font-weight: 900; backdrop-filter: blur(9px); touch-action: manipulation; }
+.mobile-controls.has-throw { grid-template-columns: repeat(5, 1fr); width: min(410px, calc(100% - 28px)); }
+.mobile-controls .throw-control { color: #4e3300; background: linear-gradient(180deg, #ffe875, #ffbd2e); font-size: 13px; }
+.mobile-controls .throw-control:disabled { opacity: .45; filter: grayscale(.55); }
 .corner-controls { position: absolute; z-index: 10; right: clamp(16px, 3vw, 32px); bottom: clamp(18px, 3vw, 30px); display: flex; align-items: flex-end; gap: 7px; }
 .audio-control { position: relative; display: flex; width: 54px; flex-direction: column; align-items: flex-end; gap: 11px; }
 .round-control { display: grid; width: 54px; height: 54px; place-items: center; border: 3px solid white; border-radius: 50%; color: #6b4300; background: linear-gradient(145deg, #fff172, #ffc72e); box-shadow: 0 5px 0 #d7890b, 0 9px 24px rgba(11,31,52,.26); cursor: pointer; transition: transform .18s ease, box-shadow .18s ease; }
@@ -118,6 +122,7 @@ button.skin-card:hover { transform: translateY(-5px) rotate(-1deg); }
   .result-card { max-height: calc(100vh - 30px); }
   .mobile-controls { display: grid; }
   .power-stack { top: 78px; }
+  .stone-status { top: 124px; }
   .corner-controls { right: 14px; bottom: 84px; }
   .round-control { width: 48px; height: 48px; }
   .audio-control { width: 48px; }

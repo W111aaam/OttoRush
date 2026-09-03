@@ -18,6 +18,7 @@ const characterNames: Record<number, string> = {
   2: '哈基米',
   3: '曼波',
   4: '龙哥',
+  5: '凑企鹅',
 };
 
 function readCharacterModels() {
