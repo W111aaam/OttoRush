@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import characterModels from 'virtual:character-models';
+import { getCharacterStats } from '@/lib/character-stats';
 
 const SKIN_STORAGE_KEY = 'otto-runner-skin';
 
@@ -166,6 +167,7 @@ export default function SkinGallery() {
       <section className="skin-grid" aria-label="可选角色皮肤">
         {characterModels.map((model) => {
           const selected = selectedSkin === model.url;
+          const stats = getCharacterStats(model.id);
           return (
             <button
               type="button"
@@ -175,6 +177,22 @@ export default function SkinGallery() {
               onClick={() => selectSkin(model.url)}
             >
               <SkinPreview url={model.url} />
+              <div className="skin-stats" aria-label={`${model.name}角色属性`}>
+                {([
+                  ['速度', stats.speed],
+                  ['血量', stats.health],
+                  ['成长', stats.growth],
+                  ['闪避', stats.dodge],
+                ] as const).map(([label, value]) => (
+                  <div className="skin-stat" key={label}>
+                    <span>{label}</span>
+                    <div className="skin-stat-track" aria-label={`${label} ${value}`}>
+                      {Array.from({ length: 4 }, (_, index) => <i className={index < value ? 'is-filled' : ''} key={index} />)}
+                    </div>
+                    <b>{value}</b>
+                  </div>
+                ))}
+              </div>
               <strong>{model.name}</strong>
               <span>{selected ? '使用中' : '点击选择'}</span>
             </button>

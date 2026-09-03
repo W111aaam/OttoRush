@@ -93,6 +93,14 @@ button.skin-card:hover { transform: translateY(-5px) rotate(-1deg); }
 .skin-card.is-selected { border-color: var(--orange); box-shadow: 0 8px 0 #c33c20, 0 22px 52px rgba(150,47,23,.3); }
 .skin-preview { position: absolute; inset: 0 0 54px; }
 .skin-preview canvas { display: block; width: 100%; height: 100%; }
+.skin-stats { position: absolute; z-index: 3; inset: 16px 14px 62px; display: grid; align-content: end; gap: 9px; padding: 15px 13px; color: white; background: linear-gradient(180deg, rgba(16,35,59,.08), rgba(16,35,59,.9)); border: 1px solid rgba(255,255,255,.3); border-radius: 15px; opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity .2s ease, transform .2s ease; backdrop-filter: blur(4px); }
+.skin-card:hover .skin-stats, .skin-card:focus-visible .skin-stats { opacity: 1; transform: translateY(0); }
+.skin-stat { display: grid; grid-template-columns: 34px 1fr 13px; gap: 7px; align-items: center; font-size: 10px; font-weight: 900; }
+.skin-stat > span { text-align: left; }
+.skin-stat > b { color: #ffe76b; font-size: 11px; font-variant-numeric: tabular-nums; }
+.skin-stat-track { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
+.skin-stat-track i { height: 7px; border-radius: 3px; background: rgba(255,255,255,.22); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); }
+.skin-stat-track i.is-filled { background: linear-gradient(90deg, #ffd84b, #ff713e); box-shadow: 0 0 7px rgba(255,198,49,.38); }
 .skin-card strong { position: relative; z-index: 1; font-size: 19px; font-weight: 1000; }
 .skin-card > span { position: relative; z-index: 1; margin-top: 3px; color: #66717c; font-size: 10px; font-weight: 850; letter-spacing: .08em; }
 .skin-card.is-selected > span { color: #d44725; }
@@ -119,4 +127,7 @@ button.skin-card:hover { transform: translateY(-5px) rotate(-1deg); }
   .skin-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .skin-card { padding: 10px; border-width: 4px; border-radius: 17px; }
   .skin-card strong { font-size: 15px; }
+  .skin-card.is-selected .skin-stats { opacity: 1; transform: translateY(0); }
+  .skin-stats { inset: 10px 8px 50px; gap: 6px; padding: 10px 8px; }
+  .skin-stat { grid-template-columns: 30px 1fr 10px; gap: 4px; font-size: 9px; }
 }

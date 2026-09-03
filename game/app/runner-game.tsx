@@ -7,6 +7,7 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import characterModels from 'virtual:character-models';
+import { characterIdFromUrl, getCharacterStats } from '@/lib/character-stats';
 
 type Phase = 'menu' | 'playing' | 'paused' | 'dying' | 'gameover';
 type EntityKind = 'coin' | 'magnet' | 'boost' | 'enemy' | 'enemyAir';
@@ -87,6 +88,7 @@ export default function RunnerGame() {
   const [magnetTime, setMagnetTime] = useState(0);
   const [boostTime, setBoostTime] = useState(0);
   const [lives, setLives] = useState(2);
+  const [maxLives, setMaxLives] = useState(2);
   const [best, setBest] = useState(0);
   const [musicVolume, setMusicVolume] = useState(0.45);
   const [sfxVolume, setSfxVolume] = useState(0.8);
@@ -304,6 +306,9 @@ export default function RunnerGame() {
     const savedCharacter = localStorage.getItem('otto-runner-skin');
     const defaultCharacter = characterModels.find((model) => model.id === 1)?.url ?? characterModels[0]?.url ?? '/models/character1.glb';
     const selectedCharacter = savedCharacter && characterModels.some((model) => model.url === savedCharacter) ? savedCharacter : defaultCharacter;
+    const selectedCharacterId = characterIdFromUrl(selectedCharacter);
+    const selectedStats = getCharacterStats(selectedCharacterId);
+    setMaxLives(selectedStats.health);
     const usesCompactAnimatedRig = selectedCharacter === '/models/character2.glb' || selectedCharacter === '/models/character3.glb';
     const usesJumpBackflip = usesCompactAnimatedRig;
     const compactCharacterHeight = 2.35 * 0.6;
@@ -328,6 +333,23 @@ export default function RunnerGame() {
     const characterVariants: Partial<Record<CharacterMode, THREE.Object3D>> = {};
     const characterMixers: THREE.AnimationMixer[] = [];
     const isCharacter4 = selectedCharacter === '/models/character4.fbx';
+    let dodgeLabel: THREE.Sprite | null = null;
+    let dodgeLabelTexture: THREE.CanvasTexture | null = null;
+    let dodgeLabelMaterial: THREE.SpriteMaterial | null = null;
+    const setDodgeVisual = (active: boolean) => {
+      Object.values(characterVariants).forEach((variant) => {
+        forEachMaterial(variant, (material) => {
+          if (active && material.userData.dodgeOpacity === undefined) {
+            material.userData.dodgeOpacity = material.opacity;
+            material.userData.dodgeTransparent = material.transparent;
+          }
+          material.opacity = active ? 0.5 : (material.userData.dodgeOpacity as number | undefined) ?? 1;
+          material.transparent = active ? true : (material.userData.dodgeTransparent as boolean | undefined) ?? false;
+          material.needsUpdate = true;
+        });
+      });
+      if (dodgeLabel) dodgeLabel.visible = active;
+    };
     const setCharacterMode = (mode: CharacterMode, restartAnimation = false) => {
       if (!characterRoot) return;
       const next = characterVariants[mode] ?? characterVariants.main;
@@ -401,6 +423,33 @@ export default function RunnerGame() {
             }
           });
           setCharacterMode('main');
+          if (isCharacter4) {
+            const labelCanvas = document.createElement('canvas');
+            labelCanvas.width = 256;
+            labelCanvas.height = 96;
+            const context = labelCanvas.getContext('2d');
+            if (context) {
+              context.font = '900 48px Arial, sans-serif';
+              context.textAlign = 'center';
+              context.textBaseline = 'middle';
+              context.shadowColor = 'rgba(16, 35, 59, .75)';
+              context.shadowBlur = 8;
+              context.lineWidth = 7;
+              context.strokeStyle = 'rgba(16, 35, 59, .65)';
+              context.strokeText('闪避', 128, 48);
+              context.fillStyle = '#ffffff';
+              context.fillText('闪避', 128, 48);
+            }
+            dodgeLabelTexture = new THREE.CanvasTexture(labelCanvas);
+            dodgeLabelTexture.colorSpace = THREE.SRGBColorSpace;
+            dodgeLabelMaterial = new THREE.SpriteMaterial({ map: dodgeLabelTexture, transparent: true, depthTest: false });
+            dodgeLabel = new THREE.Sprite(dodgeLabelMaterial);
+            dodgeLabel.position.set(1.15, 2.35, 0);
+            dodgeLabel.scale.set(1.35, 0.51, 1);
+            dodgeLabel.renderOrder = 20;
+            dodgeLabel.visible = false;
+            characterRoot.add(dodgeLabel);
+          }
           characterRoot.position.set(0, 0, PLAYER_Z);
           scene.add(characterRoot);
         }
@@ -432,7 +481,7 @@ export default function RunnerGame() {
     let gameDistance = 0;
     let gameCoins = 0;
     let gameScore = 0;
-    let gameLives = 2;
+    let gameLives = selectedStats.health;
     let invincible = 0;
     let magnet = 0;
     let boost = 0;
@@ -448,6 +497,7 @@ export default function RunnerGame() {
     let airSpinDirection = 1;
     let airSpinActive = false;
     let airSpinQueued = false;
+    let dodgeTime = 0;
     let deathEffect: {
       root: THREE.Group;
       blast: THREE.Object3D;
@@ -530,7 +580,7 @@ export default function RunnerGame() {
       gameDistance = 0;
       gameCoins = 0;
       gameScore = 0;
-      gameLives = 2;
+      gameLives = selectedStats.health;
       invincible = 0;
       magnet = 0;
       boost = 0;
@@ -542,6 +592,8 @@ export default function RunnerGame() {
       airSpinProgress = 0;
       airSpinActive = false;
       airSpinQueued = false;
+      dodgeTime = 0;
+      setDodgeVisual(false);
       characterRoot.visible = true;
       characterRoot.position.set(0, 0, PLAYER_Z);
       characterRoot.rotation.set(0, 0, 0);
@@ -559,7 +611,7 @@ export default function RunnerGame() {
       setDistance(0);
       setMagnetTime(0);
       setBoostTime(0);
-      setLives(2);
+      setLives(selectedStats.health);
       setPhase('playing');
       ensureMusic();
       playSfx('default');
@@ -632,6 +684,13 @@ export default function RunnerGame() {
       entity.active = false;
       scene.remove(entity.object);
       entity.object.position.z = 20;
+      if (entity.kind === 'enemy' && selectedStats.dodgeChance > 0 && Math.random() < selectedStats.dodgeChance) {
+        dodgeTime = 1;
+        invincible = 1;
+        setDodgeVisual(true);
+        playSfx('hidden');
+        return;
+      }
       gameLives = Math.max(0, gameLives - damage);
       setLives(gameLives);
       if (gameLives <= 0) {
@@ -704,7 +763,7 @@ export default function RunnerGame() {
       elapsed += dt;
       characterMixers.forEach((mixer) => mixer.update(dt));
       if (currentPhase === 'playing' && characterRoot && characterVisual) {
-        const baseSpeed = Math.min(16.5 + gameDistance / 85, 28);
+        const baseSpeed = Math.min(16.5 + gameDistance / 85, 28) * selectedStats.speedMultiplier;
         const speed = baseSpeed * (boost > 0 ? 1.3 : 1);
         gameDistance += speed * dt;
         spawnAt -= speed * dt;
@@ -763,11 +822,14 @@ export default function RunnerGame() {
           characterVisual.rotation.x = THREE.MathUtils.damp(characterVisual.rotation.x, playerY > 0 ? -0.1 : 0, 8, dt);
           if (isCharacter4) characterVisual.rotation.y = Math.PI;
         }
+        const wasDodging = dodgeTime > 0;
+        dodgeTime = Math.max(0, dodgeTime - dt);
+        if (wasDodging && dodgeTime === 0) setDodgeVisual(false);
         magnet = Math.max(0, magnet - dt);
         boost = Math.max(0, boost - dt);
         invincible = Math.max(0, invincible - dt);
         if (currentPhase === 'playing') {
-          characterVisual.visible = invincible <= 0 || Math.floor(invincible * 12) % 2 === 0;
+          characterVisual.visible = dodgeTime > 0 || invincible <= 0 || Math.floor(invincible * 12) % 2 === 0;
         }
 
         movers.forEach((object) => {
@@ -822,7 +884,7 @@ export default function RunnerGame() {
           }
         }
         for (let i = entities.length - 1; i >= 0; i -= 1) if (!entities[i].active && entities[i].object.position.z > 15) entities.splice(i, 1);
-        const baseScore = Math.floor(gameDistance * 3 + gameCoins * 25);
+        const baseScore = Math.floor((gameDistance * 3 + gameCoins * 25) * selectedStats.scoreMultiplier);
         if (boost > 0) boostBonusScore += Math.max(0, baseScore - previousBaseScore);
         previousBaseScore = baseScore;
         gameScore = baseScore + boostBonusScore;
@@ -891,6 +953,8 @@ export default function RunnerGame() {
       renderer.dispose();
       renderer.forceContextLoss();
       dracoLoader.dispose();
+      dodgeLabelMaterial?.dispose();
+      dodgeLabelTexture?.dispose();
       mount.replaceChildren();
       apiRef.current = null;
     };
@@ -938,7 +1002,7 @@ export default function RunnerGame() {
         <div className="game-logo"><span>OTTO</span><strong>冲刺冲</strong></div>
         {phase === 'playing' || phase === 'dying' ? (
           <div className="hud" aria-live="polite">
-            <span className="life-stat" aria-label={`剩余 ${lives} 条命`}><b>{Array.from({ length: 2 }, (_, index) => index < lives ? '♥' : '♡').join('')}</b>生命</span>
+            <span className="life-stat" aria-label={`剩余 ${lives} 条命`}><b>{Array.from({ length: maxLives }, (_, index) => index < lives ? '♥' : '♡').join('')}</b>生命</span>
             <span><b>{score.toLocaleString()}</b>分数</span>
             <span className="coin-stat"><i /> <b>{coins}</b></span>
             <span><b>{distance}m</b>距离</span>
