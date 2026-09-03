@@ -152,8 +152,19 @@ export default function RunnerGame() {
     let sfxLevel = sfxVolume;
     const activeSfx = new Set<HTMLAudioElement>();
     const ensureMusic = () => { void bgMusic.play().catch(() => undefined); };
-    const playSfx = (name: 'default' | 'death' | 'hidden' | 'hurt1' | 'hurt2' | 'pause') => {
-      const sound = new Audio(`/audio/${name}.mp3`);
+    const sfxFiles = {
+      default: '/audio/default.mp3',
+      death: '/audio/death.mp3',
+      hidden: '/audio/hidden.mp3',
+      hurt1: '/audio/hurt1.mp3',
+      hurt2: '/audio/hurt2.mp3',
+      pause: '/audio/pause.mp3',
+      boost: '/audio/zunnihuojia.mp3',
+      coin: '/audio/jiucai.mp3',
+      dodge: '/audio/c4.mp3',
+    } as const;
+    const playSfx = (name: keyof typeof sfxFiles) => {
+      const sound = new Audio(sfxFiles[name]);
       sound.volume = sfxLevel;
       activeSfx.add(sound);
       sound.addEventListener('ended', () => activeSfx.delete(sound), { once: true });
@@ -530,6 +541,7 @@ export default function RunnerGame() {
     let airSpinQueued = false;
     let dodgeTime = 0;
     let grazeTextTime = 0;
+    let nextCoinSfxAt = 0;
     let deathEffect: {
       root: THREE.Group;
       blast: THREE.Object3D;
@@ -731,7 +743,7 @@ export default function RunnerGame() {
         dodgeTime = 1;
         invincible = 1;
         setDodgeVisual(true);
-        playSfx('hidden');
+        playSfx('dodge');
         return;
       }
       gameLives = Math.max(0, gameLives - damage);
@@ -897,6 +909,11 @@ export default function RunnerGame() {
               scene.remove(entity.object);
               entity.object.position.z = 20;
               gameCoins += 1;
+              const now = performance.now();
+              if (now >= nextCoinSfxAt) {
+                playSfx('coin');
+                nextCoinSfxAt = now + 10000;
+              }
             }
           } else if (entity.kind === 'magnet') {
             entity.object.rotation.y += dt * 2.8;
@@ -915,6 +932,7 @@ export default function RunnerGame() {
               scene.remove(entity.object);
               entity.object.position.z = 20;
               boost = 10;
+              playSfx('boost');
             }
           } else if (entity.kind === 'enemyAir') {
             entity.object.position.y = AIR_ENEMY_BASE_Y + Math.sin(elapsed * 4.5) * 0.08;
