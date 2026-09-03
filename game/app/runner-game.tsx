@@ -7,7 +7,7 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import characterModels from 'virtual:character-models';
-import { characterIdFromUrl, getCharacterStats } from '@/lib/character-stats';
+import { characterIdFromUrl, getCharacterName, getCharacterStats } from '@/lib/character-stats';
 
 type Phase = 'menu' | 'playing' | 'paused' | 'dying' | 'gameover';
 type EntityKind = 'coin' | 'magnet' | 'boost' | 'enemy' | 'enemyAir';
@@ -149,6 +149,9 @@ export default function RunnerGame() {
     bgMusic.loop = true;
     bgMusic.preload = 'auto';
     bgMusic.volume = musicVolume;
+    const lebronAudio = new Audio('/audio/lebron.mp3');
+    lebronAudio.preload = 'auto';
+    lebronAudio.volume = sfxVolume;
     let sfxLevel = sfxVolume;
     const activeSfx = new Set<HTMLAudioElement>();
     const ensureMusic = () => { void bgMusic.play().catch(() => undefined); };
@@ -162,6 +165,8 @@ export default function RunnerGame() {
       boost: '/audio/zunnihuojia.mp3',
       coin: '/audio/jiucai.mp3',
       dodge: '/audio/c4.mp3',
+      magnet1: '/audio/he.mp3',
+      magnet2: '/audio/he2.mp3',
     } as const;
     const playSfx = (name: keyof typeof sfxFiles) => {
       const sound = new Audio(sfxFiles[name]);
@@ -172,7 +177,11 @@ export default function RunnerGame() {
     };
     audioApiRef.current = {
       setMusicVolume: (volume) => { bgMusic.volume = volume; if (volume > 0) ensureMusic(); },
-      setSfxVolume: (volume) => { sfxLevel = volume; activeSfx.forEach((sound) => { sound.volume = volume; }); },
+      setSfxVolume: (volume) => {
+        sfxLevel = volume;
+        lebronAudio.volume = volume;
+        activeSfx.forEach((sound) => { sound.volume = volume; });
+      },
       ensureMusic,
     };
     ensureMusic();
@@ -195,6 +204,19 @@ export default function RunnerGame() {
     const sunSprite = new THREE.Sprite(sunMaterial);
     sunSprite.renderOrder = -1;
     camera.add(sunSprite);
+    const easterEggSunMaterial = new THREE.SpriteMaterial({
+      map: sunTexture,
+      transparent: true,
+      opacity: 0.7,
+      depthTest: false,
+      depthWrite: false,
+      fog: false,
+    });
+    const easterEggSun = new THREE.Sprite(easterEggSunMaterial);
+    easterEggSun.position.set(0, 0, -10);
+    easterEggSun.renderOrder = 30;
+    easterEggSun.visible = false;
+    camera.add(easterEggSun);
     scene.add(camera);
     const placeSun = (time: number) => {
       const distance = 178;
@@ -206,6 +228,9 @@ export default function RunnerGame() {
       const pulse = 1 + Math.sin(time * 5.4) * 0.035;
       sunSprite.scale.set(width * pulse, width / (1402 / 1122) * pulse, 1);
       sunMaterial.opacity = 0.9 + Math.sin(time * 5.4) * 0.1;
+      const overlayDistance = 10;
+      const overlayHeight = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) * overlayDistance * 0.85;
+      easterEggSun.scale.set(overlayHeight * (1402 / 1122), overlayHeight, 1);
     };
     const mobileGpu = window.matchMedia('(max-width: 768px)').matches;
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: mobileGpu ? 'default' : 'high-performance' });
@@ -217,7 +242,8 @@ export default function RunnerGame() {
     renderer.toneMappingExposure = 1.05;
     mount.appendChild(renderer.domElement);
 
-    scene.add(new THREE.HemisphereLight('#eefaff', '#354761', 2.5));
+    const hemisphereLight = new THREE.HemisphereLight('#eefaff', '#354761', 2.5);
+    scene.add(hemisphereLight);
     const sun = new THREE.DirectionalLight('#fff4d3', 3.7);
     sun.position.set(-9, 16, 11);
     sun.castShadow = true;
@@ -518,6 +544,7 @@ export default function RunnerGame() {
     let targetX = 0;
     let velocityY = 0;
     let playerY = 0;
+    let fastDropSpeed = 0;
     let sliding = 0;
     let gameDistance = 0;
     let gameCoins = 0;
@@ -542,6 +569,8 @@ export default function RunnerGame() {
     let dodgeTime = 0;
     let grazeTextTime = 0;
     let nextCoinSfxAt = 0;
+    let lebronActive = false;
+    let sunEasterEggUsed = false;
     let deathEffect: {
       root: THREE.Group;
       blast: THREE.Object3D;
@@ -628,6 +657,7 @@ export default function RunnerGame() {
       targetX = 0;
       velocityY = 0;
       playerY = 0;
+      fastDropSpeed = 0;
       sliding = 0;
       gameDistance = 0;
       gameCoins = 0;
@@ -647,6 +677,7 @@ export default function RunnerGame() {
       airSpinQueued = false;
       dodgeTime = 0;
       grazeTextTime = 0;
+      sunEasterEggUsed = false;
       setDodgeVisual(false);
       if (grazeLabel) grazeLabel.visible = false;
       characterRoot.visible = true;
@@ -776,10 +807,18 @@ export default function RunnerGame() {
       }
     };
     const slide = () => {
-      if (currentPhase === 'playing' && playerY < 0.15) {
-        if (sliding <= 0.05) playSfx('hidden');
-        sliding = 0.72;
+      if (currentPhase !== 'playing') return;
+      if (playerY >= 0.15) {
+        fastDropSpeed = playerY / 0.2;
+        airSpinQueued = false;
+        airSpinActive = false;
+        airSpinProgress = 0;
+        characterVisual.position.set(0, 0, 0);
+        characterVisual.rotation.x = 0;
+        characterVisual.rotation.y = Math.PI;
       }
+      if (sliding <= 0.05) playSfx('hidden');
+      sliding = 0.72;
     };
     const pause = () => {
       if (currentPhase !== 'playing') return;
@@ -796,6 +835,39 @@ export default function RunnerGame() {
       playSfx('default');
     };
     apiRef.current = { start, pause, resume, move, jump, slide };
+
+    const restoreSunEasterEgg = () => {
+      if (!lebronActive) return;
+      lebronActive = false;
+      hemisphereLight.intensity = 2.5;
+      sun.intensity = 3.7;
+      easterEggSun.visible = false;
+      if (currentPhase !== 'paused' && bgMusic.volume > 0) ensureMusic();
+    };
+    const playSunEasterEgg = () => {
+      if (currentPhase !== 'playing' || lebronActive || sunEasterEggUsed) return;
+      sunEasterEggUsed = true;
+      lebronActive = true;
+      bgMusic.pause();
+      hemisphereLight.intensity = 2.5 * 2.6;
+      sun.intensity = 3.7 * 2.6;
+      easterEggSun.visible = true;
+      lebronAudio.currentTime = 0;
+      void lebronAudio.play().catch(restoreSunEasterEgg);
+    };
+    lebronAudio.addEventListener('ended', restoreSunEasterEgg);
+    const sunRaycaster = new THREE.Raycaster();
+    const sunPointer = new THREE.Vector2();
+    const onPointerUp = (event: PointerEvent) => {
+      const bounds = renderer.domElement.getBoundingClientRect();
+      sunPointer.set(
+        ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+        -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
+      );
+      sunRaycaster.setFromCamera(sunPointer, camera);
+      if (sunRaycaster.intersectObject(sunSprite).length > 0) playSunEasterEgg();
+    };
+    renderer.domElement.addEventListener('pointerup', onPointerUp);
 
     const keydown = (event: KeyboardEvent) => {
       if (['ArrowLeft', 'a', 'A'].includes(event.key)) move(-1);
@@ -831,10 +903,15 @@ export default function RunnerGame() {
           ? 0
           : (targetX - characterRoot.position.x) * -0.09;
         characterRoot.rotation.z = THREE.MathUtils.damp(characterRoot.rotation.z, laneLean, 10, dt);
-        velocityY -= 25 * dt;
-        playerY = Math.max(0, playerY + velocityY * dt);
+        if (fastDropSpeed > 0) {
+          playerY = Math.max(0, playerY - fastDropSpeed * dt);
+        } else {
+          velocityY -= 25 * dt;
+          playerY = Math.max(0, playerY + velocityY * dt);
+        }
         if (playerY === 0) {
           velocityY = 0;
+          fastDropSpeed = 0;
           airSpinQueued = false;
           if (isCharacter4 && !airSpinActive) characterVisual.rotation.y = Math.PI;
         }
@@ -923,6 +1000,7 @@ export default function RunnerGame() {
               scene.remove(entity.object);
               entity.object.position.z = 20;
               magnet = 8;
+              playSfx(Math.random() < 0.5 ? 'magnet1' : 'magnet2');
             }
           } else if (entity.kind === 'boost') {
             entity.object.rotation.y += dt * 3.6;
@@ -1017,12 +1095,16 @@ export default function RunnerGame() {
       cancelAnimationFrame(frame);
       window.removeEventListener('resize', resize);
       window.removeEventListener('keydown', keydown);
+      renderer.domElement.removeEventListener('pointerup', onPointerUp);
       clearEntities();
       bgMusic.pause();
+      lebronAudio.pause();
+      lebronAudio.removeEventListener('ended', restoreSunEasterEgg);
       activeSfx.forEach((sound) => { sound.pause(); sound.src = ''; });
       activeSfx.clear();
       audioApiRef.current = null;
       sunMaterial.dispose();
+      easterEggSunMaterial.dispose();
       sunTexture.dispose();
       disposeObjectResources(scene);
       Object.values(templates).forEach((template) => {
@@ -1132,7 +1214,7 @@ export default function RunnerGame() {
             {leaderboard.map((entry) => (
               <div className={`leaderboard-entry rank-${entry.rank}`} key={entry.playerId}>
                 <b>{entry.rank}</b>
-                <span>{entry.playerName}<small>角色 {entry.characterId}</small></span>
+                <span>{entry.playerName}<small>{getCharacterName(entry.characterId)}</small></span>
                 <strong>{entry.score.toLocaleString()}</strong>
               </div>
             ))}

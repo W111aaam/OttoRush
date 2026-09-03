@@ -25,6 +25,17 @@ export const CHARACTER_STATS: Record<number, CharacterStats> = {
   4: { ...BASE_STATS, dodge: 1, dodgeChance: 0.5 },
 };
 
+export const CHARACTER_NAMES: Record<number, string> = {
+  1: '棍子爹',
+  2: '哈基米',
+  3: '曼波',
+  4: '龙哥',
+};
+
+export function getCharacterName(characterId: number) {
+  return CHARACTER_NAMES[characterId] ?? `角色 ${characterId}`;
+}
+
 export function getCharacterStats(characterId: number) {
   return CHARACTER_STATS[characterId] ?? BASE_STATS;
 }
