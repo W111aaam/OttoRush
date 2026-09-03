@@ -16,6 +16,7 @@ type GameApi = { start: () => void; pause: () => void; resume: () => void; move:
 type AudioApi = { setMusicVolume: (volume: number) => void; setSfxVolume: (volume: number) => void; ensureMusic: () => void };
 type CharacterMode = 'main' | 'walk' | 'hurdle' | 'dog';
 type LoadedModel = { scene: THREE.Object3D; animations: THREE.AnimationClip[] };
+type LeaderboardEntry = { rank: number; playerId: string; playerName: string; score: number; characterId: number };
 
 const LANES = [-2.7, 0, 2.7];
 const PLAYER_Z = 3;
@@ -90,10 +91,51 @@ export default function RunnerGame() {
   const [musicVolume, setMusicVolume] = useState(0.45);
   const [sfxVolume, setSfxVolume] = useState(0.8);
   const [audioControlsOpen, setAudioControlsOpen] = useState(false);
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [leaderboardRank, setLeaderboardRank] = useState<number | null>(null);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [leaderboardError, setLeaderboardError] = useState('');
 
   useEffect(() => {
     setBest(Number(localStorage.getItem('otto-runner-best') || 0));
   }, []);
+
+  const requestLeaderboard = useCallback(async (submitScore?: number) => {
+    setLeaderboardLoading(true);
+    setLeaderboardError('');
+    try {
+      let playerId = localStorage.getItem('otto-runner-player-id');
+      if (!playerId) {
+        playerId = crypto.randomUUID();
+        localStorage.setItem('otto-runner-player-id', playerId);
+      }
+      let playerName = localStorage.getItem('otto-runner-player-name');
+      if (!playerName) {
+        playerName = `冲刺玩家${playerId.replaceAll('-', '').slice(-4).toUpperCase()}`;
+        localStorage.setItem('otto-runner-player-name', playerName);
+      }
+      const selectedSkin = localStorage.getItem('otto-runner-skin') ?? '';
+      const characterId = Number(/character(\d+)/i.exec(selectedSkin)?.[1] ?? 1);
+      const response = await fetch('/api/leaderboard', submitScore === undefined ? undefined : {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId, playerName, score: submitScore, characterId }),
+      });
+      const data = await response.json() as { entries?: LeaderboardEntry[]; rank?: number | null; error?: string };
+      if (!response.ok || !data.entries) throw new Error(data.error || '排行榜请求失败');
+      setLeaderboard(data.entries);
+      if (submitScore !== undefined) setLeaderboardRank(data.rank ?? null);
+    } catch (error) {
+      setLeaderboardError(error instanceof Error ? error.message : '排行榜请求失败');
+    } finally {
+      setLeaderboardLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (phase === 'gameover') void requestLeaderboard(score);
+  }, [phase, score, requestLeaderboard]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -926,8 +968,32 @@ export default function RunnerGame() {
           <h1>{score.toLocaleString()} <small>分</small></h1>
           <div className="result-row"><span>金币 <b>{coins}</b></span><span>距离 <b>{distance}m</b></span><span>最高 <b>{best}</b></span></div>
           <button type="button" onClick={startGame}>再冲一次</button>
+          <button type="button" className="leaderboard-button" aria-haspopup="dialog" onClick={() => { setLeaderboardOpen(true); void requestLeaderboard(); }}>🏆 排行榜</button>
           <button type="button" className="skin-library-button" onClick={() => { window.location.href = '/skins'; }}>皮肤库</button>
         </section>
+      )}
+
+      {leaderboardOpen && (
+        <dialog open className="leaderboard-card" aria-labelledby="leaderboard-title">
+          <button type="button" className="leaderboard-close" aria-label="关闭排行榜" onClick={() => setLeaderboardOpen(false)}>×</button>
+          <p>跨服竞速记录</p>
+          <h1 id="leaderboard-title">冲刺前十榜</h1>
+          {leaderboardRank !== null && <div className="leaderboard-rank">你的最高成绩位列第 <b>{leaderboardRank}</b> 名</div>}
+          {leaderboardRank === null && phase === 'gameover' && !leaderboardLoading && !leaderboardError && <div className="leaderboard-rank">本局尚未冲进前十，再来一把！</div>}
+          <div className="leaderboard-list" aria-live="polite">
+            {leaderboardLoading && leaderboard.length === 0 && <div className="leaderboard-message">正在连接排行榜…</div>}
+            {leaderboardError && <div className="leaderboard-message is-error">{leaderboardError}</div>}
+            {!leaderboardLoading && !leaderboardError && leaderboard.length === 0 && <div className="leaderboard-message">排行榜还没有成绩</div>}
+            {leaderboard.map((entry) => (
+              <div className={`leaderboard-entry rank-${entry.rank}`} key={entry.playerId}>
+                <b>{entry.rank}</b>
+                <span>{entry.playerName}<small>角色 {entry.characterId}</small></span>
+                <strong>{entry.score.toLocaleString()}</strong>
+              </div>
+            ))}
+          </div>
+          {leaderboardError && <button type="button" className="leaderboard-retry" onClick={() => void requestLeaderboard()}>重新连接</button>}
+        </dialog>
       )}
 
       {phase === 'paused' && (
