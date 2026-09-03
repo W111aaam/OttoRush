@@ -241,7 +241,8 @@ export default function RunnerGame() {
     const savedCharacter = localStorage.getItem('otto-runner-skin');
     const defaultCharacter = characterModels.find((model) => model.id === 1)?.url ?? characterModels[0]?.url ?? '/models/character1.glb';
     const selectedCharacter = savedCharacter && characterModels.some((model) => model.url === savedCharacter) ? savedCharacter : defaultCharacter;
-    const characterHeight = selectedCharacter === '/models/character3.glb' ? 2.35 * 0.6 : 2.35;
+    const usesCompactAnimatedRig = selectedCharacter === '/models/character2.glb' || selectedCharacter === '/models/character3.glb';
+    const characterHeight = usesCompactAnimatedRig ? 2.35 * 0.6 : 2.35;
     const assets: Array<[AssetKind, string, number]> = [
       ['character', selectedCharacter, characterHeight],
       ['coin', '/models/coin.glb', 0.72],
@@ -288,7 +289,11 @@ export default function RunnerGame() {
           mode,
           modelUrl,
           loaded,
-          visual: fitModel(loaded.scene, modelHeight, modelUrl === '/models/character3.glb' ? 'n9' : undefined),
+          visual: fitModel(
+            loaded.scene,
+            modelHeight,
+            modelUrl === '/models/character2.glb' ? 'n8' : modelUrl === '/models/character3.glb' ? 'n9' : undefined,
+          ),
         };
       })).then((loadedVariants) => {
         if (disposed) return;

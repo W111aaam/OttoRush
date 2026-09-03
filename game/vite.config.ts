@@ -13,13 +13,22 @@ const { d1, r2 } = hostingConfig;
 const CHARACTER_MODELS_ID = 'virtual:character-models';
 const RESOLVED_CHARACTER_MODELS_ID = `\0${CHARACTER_MODELS_ID}`;
 const modelsDirectory = fileURLToPath(new URL('./public/models', import.meta.url));
+const characterNames: Record<number, string> = {
+  1: '棍子爹',
+  2: '哈基米',
+  3: '曼波',
+  4: '龙哥',
+};
 
 function readCharacterModels() {
   return readdirSync(modelsDirectory)
     .map((fileName) => ({ fileName, match: /^character(\d+)\.(?:glb|fbx)$/i.exec(fileName) }))
     .filter((entry): entry is { fileName: string; match: RegExpExecArray } => Boolean(entry.match))
     .sort((left, right) => Number(left.match[1]) - Number(right.match[1]))
-    .map(({ fileName, match }) => ({ id: Number(match[1]), name: `Character${Number(match[1])}`, url: `/models/${fileName}` }));
+    .map(({ fileName, match }) => {
+      const id = Number(match[1]);
+      return { id, name: characterNames[id] ?? `Character${id}`, url: `/models/${fileName}` };
+    });
 }
 
 const characterModelsPlugin = {
