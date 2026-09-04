@@ -170,6 +170,7 @@ export default function RunnerGame() {
       dodge: '/audio/c4.mp3',
       magnet1: '/audio/he.mp3',
       magnet2: '/audio/he2.mp3',
+      character5Throw: '/audio/character5audio.mp3',
     } as const;
     const playSfx = (name: keyof typeof sfxFiles) => {
       const sound = new Audio(sfxFiles[name]);
@@ -891,6 +892,7 @@ export default function RunnerGame() {
       projectile.position.copy(startPosition);
       scene.add(projectile);
       thrownStone = { object: projectile, start: startPosition, target: targetPosition, lane, age: 0 };
+      playSfx('character5Throw');
       hasStone = false;
       setStoneReady(false);
     };
