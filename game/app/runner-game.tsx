@@ -24,6 +24,7 @@ const PLAYER_Z = 3;
 const AIR_ENEMY_BASE_Y = 1.62;
 const GAMEPLAY_ASSET_COUNT = 7;
 const GRAZE_REWARD = 700;
+const STONE_HIT_REWARD = 700;
 const GRAZE_LEAD_SECONDS = 0.14;
 
 function fitModel(source: THREE.Object3D, height: number, rotationPivotBone?: string) {
@@ -385,6 +386,9 @@ export default function RunnerGame() {
     let grazeLabel: THREE.Sprite | null = null;
     let grazeLabelTexture: THREE.CanvasTexture | null = null;
     let grazeLabelMaterial: THREE.SpriteMaterial | null = null;
+    let stoneHitLabel: THREE.Sprite | null = null;
+    let stoneHitLabelTexture: THREE.CanvasTexture | null = null;
+    let stoneHitLabelMaterial: THREE.SpriteMaterial | null = null;
     const setDodgeVisual = (active: boolean) => {
       Object.values(characterVariants).forEach((variant) => {
         forEachMaterial(variant, (material) => {
@@ -524,6 +528,33 @@ export default function RunnerGame() {
           grazeLabel.renderOrder = 21;
           grazeLabel.visible = false;
           characterRoot.add(grazeLabel);
+          if (isCharacter5) {
+            const hitCanvas = document.createElement('canvas');
+            hitCanvas.width = 384;
+            hitCanvas.height = 96;
+            const hitContext = hitCanvas.getContext('2d');
+            if (hitContext) {
+              hitContext.font = '900 46px Arial, sans-serif';
+              hitContext.textAlign = 'center';
+              hitContext.textBaseline = 'middle';
+              hitContext.shadowColor = 'rgba(16, 35, 59, .9)';
+              hitContext.shadowBlur = 9;
+              hitContext.lineWidth = 7;
+              hitContext.strokeStyle = 'rgba(16, 35, 59, .72)';
+              hitContext.strokeText('击中 +700', 192, 48);
+              hitContext.fillStyle = '#ffffff';
+              hitContext.fillText('击中 +700', 192, 48);
+            }
+            stoneHitLabelTexture = new THREE.CanvasTexture(hitCanvas);
+            stoneHitLabelTexture.colorSpace = THREE.SRGBColorSpace;
+            stoneHitLabelMaterial = new THREE.SpriteMaterial({ map: stoneHitLabelTexture, transparent: true, depthTest: false });
+            stoneHitLabel = new THREE.Sprite(stoneHitLabelMaterial);
+            stoneHitLabel.position.set(characterHeight * 0.48, characterHeight + 0.38, 0);
+            stoneHitLabel.scale.set(2.2, 0.55, 1);
+            stoneHitLabel.renderOrder = 22;
+            stoneHitLabel.visible = false;
+            characterRoot.add(stoneHitLabel);
+          }
           characterRoot.position.set(0, 0, PLAYER_Z);
           scene.add(characterRoot);
         }
@@ -555,6 +586,7 @@ export default function RunnerGame() {
     let sliding = 0;
     let gameDistance = 0;
     let gameCoins = 0;
+    let gameCoinScore = 0;
     let gameScore = 0;
     let gameLives = selectedStats.health;
     let invincible = 0;
@@ -562,6 +594,7 @@ export default function RunnerGame() {
     let boost = 0;
     let boostBonusScore = 0;
     let grazeBonusScore = 0;
+    let stoneHitBonusScore = 0;
     let previousBaseScore = 0;
     let spawnAt = 15;
     let lastHud = 0;
@@ -575,9 +608,10 @@ export default function RunnerGame() {
     let airSpinQueued = false;
     let dodgeTime = 0;
     let grazeTextTime = 0;
+    let stoneHitTextTime = 0;
     let nextCoinSfxAt = 0;
     let hasStone = false;
-    let thrownStone: { object: THREE.Object3D; start: THREE.Vector3; target: THREE.Vector3; age: number } | null = null;
+    let thrownStone: { object: THREE.Object3D; start: THREE.Vector3; target: THREE.Vector3; lane: number; age: number } | null = null;
     let lebronActive = false;
     let sunEasterEggUsed = false;
     let deathEffect: {
@@ -604,6 +638,12 @@ export default function RunnerGame() {
       grazeBonusScore += GRAZE_REWARD;
       grazeTextTime = 1;
       if (grazeLabel) grazeLabel.visible = true;
+    };
+
+    const awardStoneHit = () => {
+      stoneHitBonusScore += STONE_HIT_REWARD;
+      stoneHitTextTime = 1;
+      if (stoneHitLabel) stoneHitLabel.visible = true;
     };
 
     const clearEntities = () => {
@@ -678,6 +718,7 @@ export default function RunnerGame() {
       sliding = 0;
       gameDistance = 0;
       gameCoins = 0;
+      gameCoinScore = 0;
       gameScore = 0;
       gameLives = selectedStats.health;
       invincible = 0;
@@ -685,6 +726,7 @@ export default function RunnerGame() {
       boost = 0;
       boostBonusScore = 0;
       grazeBonusScore = 0;
+      stoneHitBonusScore = 0;
       previousBaseScore = 0;
       spawnAt = 8;
       lastMoveAt = -Infinity;
@@ -694,11 +736,13 @@ export default function RunnerGame() {
       airSpinQueued = false;
       dodgeTime = 0;
       grazeTextTime = 0;
+      stoneHitTextTime = 0;
       sunEasterEggUsed = false;
       hasStone = false;
       setStoneReady(false);
       setDodgeVisual(false);
       if (grazeLabel) grazeLabel.visible = false;
+      if (stoneHitLabel) stoneHitLabel.visible = false;
       characterRoot.visible = true;
       characterRoot.position.set(0, 0, PLAYER_Z);
       characterRoot.rotation.set(0, 0, 0);
@@ -724,7 +768,7 @@ export default function RunnerGame() {
 
     const finalizeGameOver = () => {
       currentPhase = 'gameover';
-      gameScore = Math.floor((gameDistance * 3 + gameCoins * 25) * selectedStats.scoreMultiplier) + boostBonusScore + grazeBonusScore;
+      gameScore = Math.floor(gameDistance * 3 * selectedStats.scoreMultiplier) + gameCoinScore + boostBonusScore + grazeBonusScore + stoneHitBonusScore;
       const nextBest = Math.max(Number(localStorage.getItem('otto-runner-best') || 0), gameScore);
       localStorage.setItem('otto-runner-best', String(nextBest));
       setBest(nextBest);
@@ -841,20 +885,12 @@ export default function RunnerGame() {
     };
     const throwStone = () => {
       if (currentPhase !== 'playing' || !isCharacter5 || !hasStone || !characterRoot || !templates.stone) return;
-      const target = entities
-        .filter((entity) => entity.active && (entity.kind === 'enemy' || entity.kind === 'enemyAir') && entity.object.position.z < PLAYER_Z)
-        .sort((left, right) => right.object.position.z - left.object.position.z)[0];
-      if (!target) return;
       const projectile = templates.stone.clone(true);
-      const startPosition = new THREE.Vector3(characterRoot.position.x, characterRoot.position.y + 1.15, PLAYER_Z - 0.35);
-      const targetPosition = target.object.position.clone();
-      targetPosition.y += target.kind === 'enemyAir' ? 0.8 : 0.65;
+      const startPosition = new THREE.Vector3(LANES[lane], characterRoot.position.y + 1.15, PLAYER_Z - 0.35);
+      const targetPosition = new THREE.Vector3(LANES[lane], startPosition.y, -42);
       projectile.position.copy(startPosition);
       scene.add(projectile);
-      thrownStone = { object: projectile, start: startPosition, target: targetPosition, age: 0 };
-      target.active = false;
-      scene.remove(target.object);
-      target.object.position.z = 20;
+      thrownStone = { object: projectile, start: startPosition, target: targetPosition, lane, age: 0 };
       hasStone = false;
       setStoneReady(false);
     };
@@ -939,14 +975,28 @@ export default function RunnerGame() {
         }
         characterRoot.position.x = THREE.MathUtils.damp(characterRoot.position.x, targetX, 15, dt);
         if (thrownStone) {
-          thrownStone.age += dt;
-          const progress = Math.min(1, thrownStone.age / 0.34);
-          thrownStone.object.position.lerpVectors(thrownStone.start, thrownStone.target, progress);
-          thrownStone.object.position.y += Math.sin(progress * Math.PI) * 1.2;
-          thrownStone.object.rotation.x += dt * 15;
-          thrownStone.object.rotation.z += dt * 11;
-          if (progress >= 1) {
-            scene.remove(thrownStone.object);
+          const shot = thrownStone;
+          shot.age += dt;
+          const progress = Math.min(1, shot.age / 0.75);
+          shot.object.position.lerpVectors(shot.start, shot.target, progress);
+          shot.object.position.y += Math.sin(progress * Math.PI) * 1.2;
+          shot.object.rotation.x += dt * 15;
+          shot.object.rotation.z += dt * 11;
+          const hitEnemy = entities.find((entity) => (
+            entity.active
+            && entity.lane === shot.lane
+            && (entity.kind === 'enemy' || entity.kind === 'enemyAir')
+            && Math.abs(entity.object.position.z - shot.object.position.z) < 1.25
+          ));
+          if (hitEnemy) {
+            hitEnemy.active = false;
+            scene.remove(hitEnemy.object);
+            hitEnemy.object.position.z = 20;
+            scene.remove(shot.object);
+            thrownStone = null;
+            awardStoneHit();
+          } else if (progress >= 1) {
+            scene.remove(shot.object);
             thrownStone = null;
           }
         }
@@ -1010,6 +1060,8 @@ export default function RunnerGame() {
         if (wasDodging && dodgeTime === 0) setDodgeVisual(false);
         grazeTextTime = Math.max(0, grazeTextTime - dt);
         if (grazeLabel) grazeLabel.visible = grazeTextTime > 0;
+        stoneHitTextTime = Math.max(0, stoneHitTextTime - dt);
+        if (stoneHitLabel) stoneHitLabel.visible = stoneHitTextTime > 0;
         magnet = Math.max(0, magnet - dt);
         boost = Math.max(0, boost - dt);
         invincible = Math.max(0, invincible - dt);
@@ -1037,6 +1089,7 @@ export default function RunnerGame() {
               scene.remove(entity.object);
               entity.object.position.z = 20;
               gameCoins += 1;
+              gameCoinScore += 10 * selectedStats.scoreMultiplier * (boost > 0 ? 2 : 1);
               const now = performance.now();
               if (now >= nextCoinSfxAt) {
                 playSfx('coin');
@@ -1102,10 +1155,10 @@ export default function RunnerGame() {
           }
         }
         for (let i = entities.length - 1; i >= 0; i -= 1) if (!entities[i].active && entities[i].object.position.z > 15) entities.splice(i, 1);
-        const baseScore = Math.floor((gameDistance * 3 + gameCoins * 25) * selectedStats.scoreMultiplier);
-        if (boost > 0) boostBonusScore += Math.max(0, baseScore - previousBaseScore);
-        previousBaseScore = baseScore;
-        gameScore = baseScore + boostBonusScore + grazeBonusScore;
+        const distanceScore = Math.floor(gameDistance * 3 * selectedStats.scoreMultiplier);
+        if (boost > 0) boostBonusScore += Math.max(0, distanceScore - previousBaseScore);
+        previousBaseScore = distanceScore;
+        gameScore = distanceScore + gameCoinScore + boostBonusScore + grazeBonusScore + stoneHitBonusScore;
         if (elapsed - lastHud > 0.12) {
           lastHud = elapsed;
           setDistance(Math.floor(gameDistance));
@@ -1179,6 +1232,8 @@ export default function RunnerGame() {
       dodgeLabelTexture?.dispose();
       grazeLabelMaterial?.dispose();
       grazeLabelTexture?.dispose();
+      stoneHitLabelMaterial?.dispose();
+      stoneHitLabelTexture?.dispose();
       mount.replaceChildren();
       apiRef.current = null;
     };
