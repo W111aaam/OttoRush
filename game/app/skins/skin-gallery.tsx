@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import characterModels from 'virtual:character-models';
 import { getCharacterStats } from '@/lib/character-stats';
@@ -19,6 +20,7 @@ function SkinPreview({ url }: { url: string }) {
     let scene: THREE.Scene | null = null;
     let camera: THREE.PerspectiveCamera | null = null;
     let renderer: THREE.WebGLRenderer | null = null;
+    let dracoLoader: DRACOLoader | null = null;
     let model: THREE.Group | null = null;
     let frame = 0;
     let disposed = false;
@@ -51,6 +53,8 @@ function SkinPreview({ url }: { url: string }) {
         renderer.forceContextLoss();
       }
       renderer = null;
+      dracoLoader?.dispose();
+      dracoLoader = null;
       mount.replaceChildren();
     };
 
@@ -79,15 +83,23 @@ function SkinPreview({ url }: { url: string }) {
         pivot.add(loadedModel);
         const initialBox = new THREE.Box3().setFromObject(loadedModel);
         const size = initialBox.getSize(new THREE.Vector3());
-        loadedModel.scale.setScalar(2.5 / Math.max(size.y, 0.001));
+        const isCharacter5 = /character5\.(?:glb|fbx)$/i.test(url);
+        const previewScale = 2.5 / Math.max(size.y, 0.001);
+        loadedModel.scale.setScalar(previewScale * (isCharacter5 ? 0.6 : 1));
         const box = new THREE.Box3().setFromObject(loadedModel);
         const center = box.getCenter(new THREE.Vector3());
-        loadedModel.position.set(-center.x, -box.min.y - 1.2, -center.z);
+        loadedModel.position.set(-center.x, -box.min.y - (isCharacter5 ? 1 : 0.7), -center.z);
         model = pivot;
         scene.add(pivot);
       };
       if (url.toLowerCase().endsWith('.fbx')) new FBXLoader().load(url, showModel);
-      else new GLTFLoader().load(url, (gltf) => showModel(gltf.scene));
+      else {
+        dracoLoader = new DRACOLoader();
+        dracoLoader.setDecoderPath('/draco/');
+        const gltfLoader = new GLTFLoader();
+        gltfLoader.setDRACOLoader(dracoLoader);
+        gltfLoader.load(url, (gltf) => showModel(gltf.scene));
+      }
 
       const resize = () => {
         if (!renderer) return;
